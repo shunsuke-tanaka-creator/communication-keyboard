@@ -1,0 +1,20 @@
+// MozcFlickKeyboard — 共通ビルド設定
+// 利用者固有の値はここに集約し、後から一括変更できるようにする。
+// 実際の Team ID / App Group はこのファイルとプレースホルダーだけ差し替える。
+
+// --- 変更してよい値（プレースホルダー） ---
+// ※ DEVELOPMENT_TEAM（Apple Developer Team ID）はここでは指定しない。
+//    Xcode の各ターゲット > Signing & Capabilities > Team のプルダウンで選択する。
+//    （xcconfig にハードコードすると GUI 選択が上書きされ、変更できなくなるため）
+
+// Bundle ID プレフィックス
+PRODUCT_BUNDLE_PREFIX = com.tanaka05.MozcFlickKeyboard
+
+// App Group（ホストアプリと Keyboard Extension のデータ共有に使用）
+// Apple の仕様上 "group." 始まりが必要。
+APP_GROUP_ID = group.com.tanaka05.MozcFlickKeyboard
+
+// --- 固定値 ---
+IPHONEOS_DEPLOYMENT_TARGET = 15.0
+SWIFT_VERSION = 5.0
+TARGETED_DEVICE_FAMILY = 1

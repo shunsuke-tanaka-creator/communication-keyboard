@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  PrivacyInfo.xcprivacy — MozcFlickKeyboard プライバシーマニフェスト
+  方針: 完全オフライン・トラッキング無し・データ収集無し（docs/privacy.md 参照）。
+  - NSPrivacyTracking = false : トラッキングを行わない
+  - NSPrivacyTrackingDomains = 空 : 追跡ドメイン無し
+  - NSPrivacyCollectedDataTypes = 空 : 収集するデータ無し
+  - NSPrivacyAccessedAPITypes : Required Reason API を使用する場合はここに記載する。
+    現状は該当 API を明示的に使用しない前提のため空配列。
+    ユーザー辞書/設定の保存に UserDefaults(App Group) を用いるため、必要に応じて
+    CA92.1（自アプリのアクセス）等の理由コードを後から追加すること（メインが結合時に確認）。
+-->
+<plist version="1.0">
+<dict>
+	<key>NSPrivacyTracking</key>
+	<false/>
+	<key>NSPrivacyTrackingDomains</key>
+	<array/>
+	<key>NSPrivacyCollectedDataTypes</key>
+	<array/>
+	<key>NSPrivacyAccessedAPITypes</key>
+	<array>
+		<!--
+		  UserDefaults を使用しているため、Required Reason API 該当時は以下を有効化する。
+		  完全オフライン・自アプリ用途のため理由コードは "CA92.1"（同一アプリ内アクセス）を想定。
+		  実際に必要か（App Store 申請対象か）はメインが結合時に確認すること。
+		-->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>CA92.1</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>

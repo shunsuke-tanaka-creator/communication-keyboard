@@ -1,0 +1,17 @@
+# Xcode / build
+*.xcodeproj
+DerivedData/
+build/
+out/
+*.xcuserstate
+xcuserdata/
+
+# macOS
+.DS_Store
+
+# Mozc source (取得は scripts/bootstrap.sh)
+third_party/mozc/
+vendor/mozc/
+
+# Bazel
+bazel-*

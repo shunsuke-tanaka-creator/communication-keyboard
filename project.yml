@@ -1,0 +1,165 @@
+name: MozcFlickKeyboard
+options:
+  bundleIdPrefix: com.tanaka05
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+
+configFiles:
+  Debug: Config/Project.xcconfig
+  Release: Config/Project.xcconfig
+
+settings:
+  base:
+    # DEVELOPMENT_TEAM は Xcode GUI（各ターゲットの Signing & Capabilities）で設定する。
+    # xcconfig にハードコードすると GUI 選択が上書きされるため、ここでは定義しない。
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    CLANG_CXX_LANGUAGE_STANDARD: "c++17"
+    # Mozc 実エンジンを結合済み（MOZC_AVAILABLE=ON）。
+    # 各ターゲット settings で MOZC_AVAILABLE 定義 + out/mozc のヘッダ/ライブラリを参照している。
+    # スタブに戻すには MozcFlickShared / Extension の該当設定を外す。
+    # 追加: out/mozc/libmozc_ios.a は arm64 実機専用のため、Mozc 関連設定は [sdk=iphoneos*] で
+    #       実機ビルド時のみ適用する。シミュレータビルドでは MOZC_AVAILABLE 未定義となり
+    #       LocalStubEngine にフォールバックしてビルド・実行できる。
+
+targets:
+  # 共有ロジック（App / Extension 双方から使用）
+  MozcFlickShared:
+    type: framework
+    platform: iOS
+    sources:
+      - path: MozcFlickKeyboard/Shared
+      - path: MozcFlickKeyboard/MozcBridge
+        # module.modulemap は参考用のため、フレームワークソースから除外する。
+        excludes:
+          - "module.modulemap"
+      # ObjC++ ブリッジヘッダをフレームワークの public ヘッダとして公開し、
+      # 同一フレームワーク内の Swift から自動可視にする（framework は bridging header 不可）。
+      - path: MozcFlickKeyboard/MozcBridge/MozcEngineBridge.h
+        attributes: [public]
+      - path: MozcFlickKeyboard/MozcBridge/MozcFlickShared.h
+        attributes: [public]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tanaka05.MozcFlickKeyboard.Shared
+        DEFINES_MODULE: "YES"
+        CLANG_ENABLE_MODULES: "YES"
+        # C++ を含む .mm をコンパイルするため
+        CLANG_CXX_LANGUAGE_STANDARD: "c++17"
+        GENERATE_INFOPLIST_FILE: "YES"
+        # --- Mozc 実エンジン結合（MOZC_AVAILABLE=ON） ---
+        # 追加: out/mozc/libmozc_ios.a は arm64 実機専用のため、Mozc 関連設定は
+        #       実機 SDK(iphoneos*) のときのみ適用する。シミュレータ(iphonesimulator*)では
+        #       MOZC_AVAILABLE 未定義 → LocalStubEngine にフォールバックしてビルド可能にする。
+        # スタブに戻す場合は下記の [sdk=iphoneos*] 設定を外す。
+        "GCC_PREPROCESSOR_DEFINITIONS[sdk=iphoneos*]":
+          - "$(inherited)"
+          - "MOZC_AVAILABLE=1"
+        "SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]": "MOZC_AVAILABLE"
+        # ios_engine.h -> protocol/*.pb.h -> google/protobuf/*, absl/* を解決するヘッダ検索パス。
+        "HEADER_SEARCH_PATHS[sdk=iphoneos*]":
+          - "$(inherited)"
+          - "$(SRCROOT)/out/mozc/include"
+        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]":
+          - "$(inherited)"
+          - "$(SRCROOT)/out/mozc"
+        # 集約静的ライブラリ（engine/session/protobuf/absl を内包）をリンク。
+        # -ObjC: 静的ライブラリ内の ObjC カテゴリ/クラスを確実にロードする。
+        "OTHER_LDFLAGS[sdk=iphoneos*]":
+          - "$(inherited)"
+          - "-lmozc_ios"
+          - "-ObjC"
+          - "-lc++"
+          - "-liconv"
+          - "-lz"
+          - "-framework"
+          - "UIKit"
+          - "-framework"
+          - "Foundation"
+          - "-framework"
+          - "CoreFoundation"
+          - "-framework"
+          - "Security"
+
+  # ホストアプリ
+  MozcFlickKeyboard:
+    type: application
+    platform: iOS
+    sources:
+      - path: MozcFlickKeyboard/App
+    dependencies:
+      - target: MozcFlickShared
+      - target: MozcFlickKeyboardExtension
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tanaka05.MozcFlickKeyboard
+        INFOPLIST_FILE: MozcFlickKeyboard/App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: MozcFlickKeyboard/App/App.entitlements
+
+  # Custom Keyboard Extension
+  MozcFlickKeyboardExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: MozcFlickKeyboard/Keyboard
+      # Mozc 辞書データを Extension バンドルに同梱する（IosEngine の初期化に渡す）。
+      - path: out/mozc/mozc.data
+        buildPhase: resources
+    dependencies:
+      - target: MozcFlickShared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tanaka05.MozcFlickKeyboard.Keyboard
+        INFOPLIST_FILE: MozcFlickKeyboard/Keyboard/Info.plist
+        CODE_SIGN_ENTITLEMENTS: MozcFlickKeyboard/Keyboard/Keyboard.entitlements
+        # KeyboardViewController.swift の #if MOZC_AVAILABLE を有効化するため Extension にも定義。
+        # 追加: libmozc_ios.a は arm64 実機専用のため、実機 SDK(iphoneos*) のときのみ Mozc を有効化。
+        #       シミュレータでは MOZC_AVAILABLE 未定義 → LocalStubEngine で動作。
+        "SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]": "MOZC_AVAILABLE"
+        # 静的ライブラリ(libmozc_ios.a)は最終実行体(Extension)側でも明示リンクする。
+        "LIBRARY_SEARCH_PATHS[sdk=iphoneos*]":
+          - "$(inherited)"
+          - "$(SRCROOT)/out/mozc"
+        "OTHER_LDFLAGS[sdk=iphoneos*]":
+          - "$(inherited)"
+          - "-lmozc_ios"
+          - "-ObjC"
+          - "-lc++"
+          - "-liconv"
+          - "-lz"
+          - "-framework"
+          - "UIKit"
+          - "-framework"
+          - "Foundation"
+          - "-framework"
+          - "CoreFoundation"
+          - "-framework"
+          - "Security"
+
+  # 単体テスト
+  MozcFlickTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: MozcFlickShared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tanaka05.MozcFlickKeyboard.Tests
+        # 結合済みのため、ガードされたテスト（スタブ/辞書）を有効化する。
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "LOCAL_STUB_AVAILABLE USER_DICT_AVAILABLE"
+
+schemes:
+  MozcFlickKeyboard:
+    build:
+      targets:
+        MozcFlickKeyboard: all
+        MozcFlickKeyboardExtension: all
+    run:
+      config: Debug
+    test:
+      targets:
+        - MozcFlickTests

@@ -1,0 +1,23 @@
+// =============================================================================
+// module.modulemap （参考 / 任意）
+//
+// 方式の選択について:
+//  本プロジェクトは基本的に「bridging header 方式」を採用する。
+//  すなわち、App / Keyboard ターゲットの Objective-C Bridging Header に
+//    #import "MozcEngineBridge.h"
+//  を追加すれば、Swift から MozcEngineBridge をそのまま利用できる。
+//  この場合、本 modulemap は不要（存在しても害はないが読み込ませない）。
+//
+//  一方、MozcBridge を独立した Clang モジュール / フレームワークとして
+//  切り出したい場合（例: SwiftPM や別ターゲット化）には、この modulemap を
+//  MODULEMAP_FILE ビルド設定で指定して import 可能にできる。
+//    Swift 側: import MozcBridge
+//
+//  メインエージェントが XcodeGen(project.yml) を bridging header 前提で
+//  構成する予定のため、既定では下記モジュール定義は使用しない。
+// =============================================================================
+
+module MozcBridge {
+    header "MozcEngineBridge.h"
+    export *
+}
