@@ -71,6 +71,37 @@ public struct ScheduleItem {
         guard let m = minutes else { return false }
         return nowMinutes >= m - 5 && nowMinutes <= m + 30
     }
+
+    // MARK: - サンプル予定（追加）
+
+    /// 追加: 曜日ビットの定番パターン。index 0=日 … 6=土。
+    public static let everyday = "1111111"   // 追加: 毎日
+    public static let weekdays = "0111110"   // 追加: 平日（月〜金）
+    public static let weekend = "1000001"    // 追加: 土日
+
+    /// 追加: 初期投入・サンプル読み込み用の予定一覧。
+    /// 生活リズム（起床→朝食→服薬→外出→水分→昼食→休憩→帰宅→夕食→入浴→服薬→就寝）を一通り網羅する。
+    /// needsCheck=true はキーボード上に質問＋チェックボタンを出し、false は「次の予定」表示のみになる。
+    /// すべて通常の予定として保存されるので、設定画面から時刻・文言・チェック・曜日を編集でき、削除もできる。
+    public static var samples: [ScheduleItem] {
+        [
+            ScheduleItem(time: "07:00", text: "起きましたか", needsCheck: true, weekdays: everyday),
+            ScheduleItem(time: "07:30", text: "朝ごはんを食べましたか", needsCheck: true, weekdays: everyday),
+            ScheduleItem(time: "08:00", text: "朝の薬を飲みましたか", needsCheck: true, weekdays: everyday),
+            ScheduleItem(time: "08:30", text: "仕事に向かっていますか", needsCheck: true, weekdays: weekdays),
+            ScheduleItem(time: "10:00", text: "水分をとりましたか", needsCheck: true, weekdays: everyday),
+            ScheduleItem(time: "12:00", text: "昼ごはんを食べましたか", needsCheck: true, weekdays: everyday),
+            ScheduleItem(time: "13:00", text: "少し休憩しましたか", needsCheck: true, weekdays: weekdays),
+            ScheduleItem(time: "15:00", text: "体調はどうですか", needsCheck: true, weekdays: everyday),
+            ScheduleItem(time: "16:00", text: "散歩に行きませんか", needsCheck: true, weekdays: weekend),
+            ScheduleItem(time: "17:30", text: "帰宅しましたか", needsCheck: true, weekdays: weekdays),
+            ScheduleItem(time: "18:30", text: "夕食の準備", needsCheck: false, weekdays: everyday),
+            ScheduleItem(time: "19:00", text: "夕ごはんを食べましたか", needsCheck: true, weekdays: everyday),
+            ScheduleItem(time: "21:00", text: "お風呂に入りましたか", needsCheck: true, weekdays: everyday),
+            ScheduleItem(time: "22:00", text: "夜の薬を飲みましたか", needsCheck: true, weekdays: everyday),
+            ScheduleItem(time: "23:00", text: "寝る準備をしましたか", needsCheck: true, weekdays: everyday),
+        ]
+    }
 }
 
 /// 安否確認チェックのログ。App Group 共有コンテナへ日付別 JSONL で追記する。

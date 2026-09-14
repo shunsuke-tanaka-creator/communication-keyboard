@@ -9,6 +9,7 @@ final class RootViewController: UIViewController {
     /// 遷移先を表す行データ。
     private enum Row: Int, CaseIterable {
         case settings
+        case narrative // 追加: お天気分ダッシュボード（設定の直下で目立たせる）
         case license
         case debug
         case logs // 追加: 入力ログ閲覧
@@ -17,6 +18,7 @@ final class RootViewController: UIViewController {
         var title: String {
             switch self {
             case .settings: return "設定"
+            case .narrative: return "お天気分" // 追加
             case .license: return "ライセンス"
             case .debug:    return "デバッグ情報"
             case .logs:     return "入力ログ" // 追加
@@ -118,6 +120,7 @@ extension RootViewController: UITableViewDataSource, UITableViewDelegate {
         let next: UIViewController
         switch row {
         case .settings: next = SettingsViewController()
+        case .narrative: next = NarrativeDashboardViewController() // 追加: お天気分ダッシュボードへ遷移
         case .license:  next = LicenseViewController()
         case .debug:    next = DebugInfoViewController()
         case .logs:     next = SessionLogsViewController() // 追加: 入力ログ閲覧

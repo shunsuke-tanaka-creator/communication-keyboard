@@ -33,6 +33,22 @@ final class KeyboardView: UIView {
 
     // MARK: - サブビュー
 
+    /// 追加: 候補バーの上に置く「お天気分」質問／手動イベントバナー。既定は高さ0 + 非表示。
+    let questionBanner = NarrativeQuestionBanner()
+
+    /// 追加: バナーの高さ制約。質問なし=0。フル画面時は無効化して bannerFullScreenConstraint を使う。
+    private var bannerHeightConstraint: NSLayoutConstraint?
+
+    /// 追加: フル画面時にバナー下端を infoBar の上まで伸ばす制約。質問表示中のみ有効化する。
+    private var bannerFullScreenConstraint: NSLayoutConstraint?
+
+    /// 追加: フル画面時に追加で確保する高さ（pt）。選択肢を大きく並べるため通常より背を高くする。
+    static let bannerVisibleHeight: CGFloat = 60
+
+    /// 追加: キーボード全体に必要な高さが変わったときに通知する。KeyboardViewController が高さ制約へ反映する。
+    /// バナー非表示時は 0、表示時は bannerVisibleHeight を渡す。
+    var onRequiredExtraHeightChanged: ((CGFloat) -> Void)?
+
     /// 上部候補バー。
     let candidateBar = CandidateBarView()
 
@@ -59,9 +75,18 @@ final class KeyboardView: UIView {
         return b
     }()
 
-    /// 追加: 最下層に表示する情報バー（文言ラベル + チェックボタン）。入力欄には書かず表示のみ。
+    /// 追加: 手動イベント記録ボタン。押下で onRecordTap を呼び、バナーに手動イベント4ボタンを展開する。
+    private let recordButton: UIButton = {
+        let b = UIButton(type: .system)
+        b.setTitle("記録", for: .normal)
+        b.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        b.setContentHuggingPriority(.required, for: .horizontal)
+        return b
+    }()
+
+    /// 追加: 最下層に表示する情報バー（文言ラベル + 記録ボタン + チェックボタン）。入力欄には書かず表示のみ。
     private lazy var infoBar: UIStackView = {
-        let s = UIStackView(arrangedSubviews: [infoLabel, checkButton])
+        let s = UIStackView(arrangedSubviews: [infoLabel, recordButton, checkButton])
         s.axis = .horizontal
         s.spacing = 8
         s.alignment = .center
@@ -71,6 +96,24 @@ final class KeyboardView: UIView {
 
     /// 追加: チェックボタン押下時のコールバック。KeyboardViewController が設定する。
     var onCheck: (() -> Void)?
+
+    /// 追加:「記録」ボタン押下時のコールバック。KeyboardViewController が手動イベントバナーを開く。
+    var onRecordTap: (() -> Void)?
+
+    // 追加: バナーのコールバックをそのまま controller へ中継する透過プロパティ群。
+    //       KeyboardView は proxy を持たないため、これらは決して入力欄へ繋がらない。
+    /// 追加: 選択肢タップの中継。
+    var onQuestionOption: ((QuestionOption) -> Void)?
+    /// 追加:「あとで」の中継。
+    var onQuestionSnooze: (() -> Void)?
+    /// 追加:「自由入力」開始の中継。
+    var onFreeTextStart: (() -> Void)?
+    /// 追加: 自由記述「決定」の中継。
+    var onFreeTextCommit: (() -> Void)?
+    /// 追加: 自由記述「キャンセル」の中継。
+    var onFreeTextCancel: (() -> Void)?
+    /// 追加: 手動イベント選択の中継。
+    var onManualEvent: ((ManualEvent) -> Void)?
 
     /// キー全体を縦に積む親スタック。
     private let rootStack: UIStackView = {
@@ -102,6 +145,10 @@ final class KeyboardView: UIView {
         candidateList.translatesAutoresizingMaskIntoConstraints = false
         candidateList.isHidden = true
 
+        questionBanner.translatesAutoresizingMaskIntoConstraints = false // 追加: バナーの AutoLayout 管理
+        questionBanner.isHidden = true // 追加: 既定は非表示（質問なし）
+
+        addSubview(questionBanner) // 追加: 候補バーの上へバナーを差し込む
         addSubview(candidateBar)
         addSubview(rootStack)
         addSubview(infoBar) // 追加: 最下層の情報バー
@@ -109,6 +156,15 @@ final class KeyboardView: UIView {
         addSubview(candidateList)
 
         checkButton.addTarget(self, action: #selector(checkButtonTapped), for: .touchUpInside) // 追加
+        recordButton.addTarget(self, action: #selector(recordButtonTapped), for: .touchUpInside) // 追加:「記録」ボタン配線
+
+        // 追加: バナーのコールバックを透過プロパティへ中継する（proxy へは一切繋がない）。
+        questionBanner.onSelectOption = { [weak self] option in self?.onQuestionOption?(option) }
+        questionBanner.onSnooze = { [weak self] in self?.onQuestionSnooze?() }
+        questionBanner.onFreeTextStart = { [weak self] in self?.onFreeTextStart?() }
+        questionBanner.onFreeTextCommit = { [weak self] in self?.onFreeTextCommit?() }
+        questionBanner.onFreeTextCancel = { [weak self] in self?.onFreeTextCancel?() }
+        questionBanner.onManualEvent = { [weak self] event in self?.onManualEvent?(event) }
 
         candidateBar.onSelect = { [weak self] candidate in
             self?.actionDelegate?.keyboardDidSelectCandidate(id: candidate.id)
@@ -121,8 +177,24 @@ final class KeyboardView: UIView {
             self?.actionDelegate?.keyboardDidSelectCandidate(id: candidate.id)
         }
 
+        // 追加: バナー高さ制約を保持（既定0 = 非表示）。フル画面時は無効化する。
+        let bh = questionBanner.heightAnchor.constraint(equalToConstant: 0)
+        bannerHeightConstraint = bh
+
+        // 追加: フル画面制約（バナー下端を infoBar の上まで伸ばす）。質問表示中のみ有効化するので既定は無効。
+        let bf = questionBanner.bottomAnchor.constraint(equalTo: infoBar.topAnchor, constant: -3)
+        bannerFullScreenConstraint = bf
+        bf.isActive = false
+
         NSLayoutConstraint.activate([
-            candidateBar.topAnchor.constraint(equalTo: topAnchor),
+            // 追加: バナーを最上部にピン留め（候補バーの上）。
+            questionBanner.topAnchor.constraint(equalTo: topAnchor),
+            questionBanner.leadingAnchor.constraint(equalTo: leadingAnchor),
+            questionBanner.trailingAnchor.constraint(equalTo: trailingAnchor),
+            bh, // 追加: 可変高さ（0/64）
+
+            // 変更: 候補バーの上端を topAnchor からバナーの下端へ付け替える。
+            candidateBar.topAnchor.constraint(equalTo: questionBanner.bottomAnchor),
             candidateBar.leadingAnchor.constraint(equalTo: leadingAnchor),
             candidateBar.trailingAnchor.constraint(equalTo: trailingAnchor),
             candidateBar.heightAnchor.constraint(equalToConstant: 44),
@@ -210,6 +282,73 @@ final class KeyboardView: UIView {
     /// 追加: チェックボタン押下。
     @objc private func checkButtonTapped() {
         onCheck?()
+    }
+
+    /// 追加:「記録」ボタン押下。手動イベントバナーを開く指示を controller へ送る。
+    @objc private func recordButtonTapped() {
+        onRecordTap?()
+    }
+
+    // MARK: - 公開 API（お天気分バナー）
+
+    /// 変更: 質問をバナーに表示する。フル画面モードでキーボード全体を占有する（キー・候補バーを隠す）。
+    func showQuestion(_ pending: PendingQuestion) {
+        questionBanner.showQuestion(pending) // 追加: 内容を構築
+        setNarrativeFullScreen(true) // 追加: キー領域・候補バーを隠してバナーが全面を使う
+    }
+
+    /// 変更: バナーを閉じる（フル画面解除 + 内容消去）。通常のキーボードへ戻る。
+    func hideQuestion() {
+        setNarrativeFullScreen(false) // 追加: 通常キーボード表示へ戻す
+        questionBanner.clear() // 追加: 内容消去
+    }
+
+    /// 変更: 手動イベント4ボタンをバナーに表示する（infoBar「記録」から）。フル画面で表示。
+    func showManualEventPicker() {
+        questionBanner.showManualEvents() // 追加: 手動イベントボタン構築
+        setNarrativeFullScreen(true) // 追加: フル画面で大きなボタンを見せる
+    }
+
+    /// 追加: 「お天気分」フル画面モードの ON/OFF。
+    /// ON のとき、バナーをキーボード全体（候補バー〜キー領域〜infoBar の上まで）に広げ、
+    /// 候補バー・キー領域・候補一覧を隠す。OFF で元の通常キーボードへ戻す。
+    private func setNarrativeFullScreen(_ on: Bool) {
+        questionBanner.isHidden = !on // 追加: バナーの表示切替
+        candidateBar.isHidden = on // 追加: 質問中は候補バーを隠す
+        rootStack.isHidden = on // 追加: 質問中はキー領域を隠す
+        if on { setCandidateListVisible(false) } // 追加: 候補一覧が開いていたら閉じる
+
+        // 追加: 制約を入れ替える。ON はバナー下端を infoBar の上まで伸ばして全面占有、OFF は高さ0に戻す。
+        bannerHeightConstraint?.isActive = !on // 追加: OFF のときだけ高さ0制約を使う
+        bannerFullScreenConstraint?.isActive = on // 追加: ON のときだけ下端まで伸ばす
+        onRequiredExtraHeightChanged?(on ? Self.bannerVisibleHeight : 0) // 追加: フル画面時はキーボード全体を高くして選択肢を見せる
+        NSLog("[MFK-Narrative] fullScreen=\(on)") // 追加: 表示モードのデバッグ
+    }
+
+    /// 追加: 研究入力モードの下書き文字列をバナーへ反映する。
+    func setResearchDraft(_ text: String) {
+        questionBanner.updateFreeTextDraft(text)
+    }
+
+    /// 変更: バナーを自由記述 UI に切り替える／戻す。
+    /// 自由記述中はフリック入力でキーを打つ必要があるため、フル画面を解除してキー領域を表示する
+    /// （バナーは上部の帯に戻り、下書きと決定/キャンセルだけを見せる）。
+    /// 自由記述をやめて選択肢へ戻るときは、再びフル画面にして大きな選択肢を見せる。
+    func setResearchFreeTextMode(_ on: Bool) {
+        questionBanner.setFreeTextMode(on)
+        if on {
+            // 追加: キーを出すためフル画面を解除し、バナーは帯状で残す。
+            candidateBar.isHidden = false // 追加: 変換候補を見せる（自由記述もかな漢字変換を使う）
+            rootStack.isHidden = false // 追加: キー領域を出す
+            bannerFullScreenConstraint?.isActive = false // 追加: 全面制約を外す
+            bannerHeightConstraint?.isActive = true // 追加: 帯状の高さ制約へ戻す
+            bannerHeightConstraint?.constant = Self.bannerVisibleHeight // 追加: 帯の高さ
+            questionBanner.isHidden = false // 追加: バナー自体は出したままにする
+            onRequiredExtraHeightChanged?(Self.bannerVisibleHeight) // 追加: 帯の分だけ全体を高くする
+            NSLog("[MFK-Narrative] freeText mode: keys visible") // 追加: デバッグ
+        } else {
+            setNarrativeFullScreen(true) // 追加: 選択肢表示へ戻るのでフル画面に戻す
+        }
     }
 
     // MARK: - キー構築（データ駆動）

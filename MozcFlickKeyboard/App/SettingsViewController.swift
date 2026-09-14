@@ -49,6 +49,9 @@ final class SettingsViewController: UIViewController {
     /// App Group 共有の UserDefaults。
     private let defaults = UserDefaults(suiteName: AppConfig.appGroupID)
 
+    /// 追加: 研究設定（お天気分）の状態ストア。同じ App Group UserDefaults へ書き込む。
+    private let narrativeState = NarrativeState()
+
     /// 追加: 予定の配列（各要素は TSV）。UserDefaults と同期する。
     private var schedules: [String] {
         get { defaults?.stringArray(forKey: SettingsKeys.schedules) ?? [] }
@@ -74,9 +77,12 @@ final class SettingsViewController: UIViewController {
         super.viewDidLoad()
         title = "設定"
         view.backgroundColor = .systemBackground // ダークモード追従
-        // 追加: 予定を1件追加する + ボタン。
-        navigationItem.rightBarButtonItem = UIBarButtonItem(
-            barButtonSystemItem: .add, target: self, action: #selector(addSchedule))
+        // 変更: 予定を1件追加する + ボタンと、サンプル読み込みボタンを並べる。
+        navigationItem.rightBarButtonItems = [
+            UIBarButtonItem(barButtonSystemItem: .add, target: self, action: #selector(addSchedule)),
+            UIBarButtonItem(title: "サンプル", style: .plain, target: self, action: #selector(loadSampleSchedules)), // 追加: サンプル一括追加
+        ]
+        seedSampleSchedulesIfEmpty() // 追加: 予定が未登録なら初回だけサンプルを投入する
         setupTableView()
         registerKeyboardNotifications() // 追加: キーボード表示でセルが隠れないようにする
     }
@@ -128,6 +134,57 @@ final class SettingsViewController: UIViewController {
     @objc private func switchChanged(_ sender: UISwitch) {
         let item = items[sender.tag]
         defaults?.set(sender.isOn, forKey: item.key)
+    }
+
+    // 追加: 研究設定（お天気分）— 各テキストフィールドの tag 定数（予定行の tag=行番号と衝突しない値）。
+    private enum NarrativeFieldTag: Int {
+        case participantID = 9001 // 追加: 参加者ID フィールド
+        case backendURL = 9002    // 追加: Backend URL フィールド
+    }
+
+    // 追加: 参加者ID / Backend URL の編集を NarrativeState 経由で App Group へ保存する。
+    @objc private func narrativeTextChanged(_ sender: UITextField) {
+        let text = sender.text ?? ""
+        switch NarrativeFieldTag(rawValue: sender.tag) {
+        case .participantID: narrativeState.participantID = text // 追加: 参加者ID を保存
+        case .backendURL:    narrativeState.backendBaseURL = text // 追加: 空なら通常入力本文は勿論、研究回答もローカルのみ
+        case .none: break
+        }
+    }
+
+    // 追加: 質問機能 ON/OFF を NarrativeState 経由で保存する。
+    @objc private func narrativeEnabledChanged(_ sender: UISwitch) {
+        narrativeState.narrativeEnabled = sender.isOn // 追加: 質問機能の有効/無効を保存
+    }
+
+    /// 追加: 予定が1件も無いときだけ、サンプル予定を初回投入する（既存の登録は絶対に上書きしない）。
+    private func seedSampleSchedulesIfEmpty() {
+        guard schedules.isEmpty else { return } // 追加: 既に登録があれば何もしない
+        schedules = ScheduleItem.samples.map { $0.tsv } // 追加: サンプルを TSV にして保存
+        NSLog("[MFK] seedSampleSchedulesIfEmpty count=\(ScheduleItem.samples.count)") // 追加: 初回投入のデバッグ
+    }
+
+    /// 追加: サンプル予定をまとめて追加する。既存の予定は残したまま、重複（同じ時刻+文言）だけ避けて足す。
+    @objc private func loadSampleSchedules() {
+        var list = schedules // 追加: 現在の登録
+        let existingKeys = Set(ScheduleItem.parse(list).map { $0.logKey }) // 追加: 重複判定用（時刻+文言）
+        var added = 0 // 追加: 実際に足した件数
+        for sample in ScheduleItem.samples where !existingKeys.contains(sample.logKey) {
+            list.append(sample.tsv) // 追加: 未登録のサンプルだけ足す
+            added += 1
+        }
+        // 追加: 時刻順に並べ替えて見やすくする（パース不能な行は末尾へ）。
+        list = ScheduleItem.parse(list)
+            .sorted { ($0.minutes ?? Int.max) < ($1.minutes ?? Int.max) }
+            .map { $0.tsv }
+        schedules = list
+        tableView.reloadData()
+        NSLog("[MFK] loadSampleSchedules added=\(added) total=\(list.count)") // 追加: 追加件数のデバッグ
+        // 追加: 結果をユーザーへ知らせる。
+        let message = added > 0 ? "サンプル予定を \(added) 件追加しました。" : "追加できるサンプルはありません（すべて登録済み）。"
+        let alert = UIAlertController(title: "サンプル読み込み", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
     }
 
     /// 追加: 予定を1件追加する（時刻は現在時刻を既定、文言は空、チェックOFF、毎日）。
@@ -198,6 +255,8 @@ extension SettingsViewController: UITextFieldDelegate {
 
     // 追加: 編集開始時にその予定行を見える位置までスクロールする。
     func textFieldDidBeginEditing(_ textField: UITextField) {
+        // 追加: 研究設定のフィールド（tag=9001/9002）は予定行ではないのでスクロール対象外。
+        if NarrativeFieldTag(rawValue: textField.tag) != nil { return }
         let indexPath = IndexPath(row: textField.tag, section: 1)
         tableView.scrollToRow(at: indexPath, at: .middle, animated: true)
     }
@@ -209,15 +268,19 @@ extension SettingsViewController: UITextFieldDelegate {
 extension SettingsViewController: UITableViewDataSource {
 
     func numberOfSections(in tableView: UITableView) -> Int {
-        return 2 // 追加: section1 に予定入力を追加
+        return 3 // 変更: section2 に研究設定（お天気分）を追加
     }
 
     func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        return section == 1 ? "予定・安否確認（時刻の5分前から表示）" : nil // 変更
+        // 変更: 予定セクションに操作方法（追加・サンプル・編集・削除）を明記する。
+        if section == 1 { return "予定・安否確認（時刻の5分前から表示 / 右上＋で追加・サンプルで一括追加 / 左スワイプで削除）" } // 変更
+        if section == 2 { return "研究設定（お天気分）" } // 追加
+        return nil
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         if section == 1 { return schedules.count } // 変更: 予定の件数
+        if section == 2 { return 3 } // 追加: 参加者ID / Backend URL / 質問機能
         return items.count
     }
 
@@ -300,6 +363,62 @@ extension SettingsViewController: UITableViewDataSource {
                 stack.bottomAnchor.constraint(equalTo: cell.contentView.bottomAnchor, constant: -8),
             ])
             cell.selectionStyle = .none
+            return cell
+        }
+
+        // 追加: section2 は研究設定（お天気分）。0=参加者ID, 1=Backend URL, 2=質問機能 ON/OFF。
+        if indexPath.section == 2 {
+            let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
+            cell.selectionStyle = .none
+            if indexPath.row == 2 {
+                // 追加: 質問機能 ON/OFF のスイッチ行。
+                var config = cell.defaultContentConfiguration()
+                config.text = "質問機能"
+                config.secondaryText = "お天気分の質問を表示する"
+                cell.contentConfiguration = config
+                let toggle = UISwitch()
+                toggle.isOn = narrativeState.narrativeEnabled // 追加: 現在値を反映
+                toggle.accessibilityLabel = "質問機能"
+                toggle.addTarget(self, action: #selector(narrativeEnabledChanged(_:)), for: .valueChanged)
+                cell.accessoryView = toggle
+                return cell
+            }
+
+            // 追加: 参加者ID / Backend URL の編集フィールド行（ラベル + テキストフィールド）。
+            let titleLabel = UILabel()
+            titleLabel.font = .systemFont(ofSize: 15)
+            titleLabel.setContentHuggingPriority(.required, for: .horizontal)
+
+            let field = UITextField()
+            field.borderStyle = .roundedRect
+            field.delegate = self
+            field.autocapitalizationType = .none // 追加: ID / URL は自動大文字化しない
+            field.autocorrectionType = .no
+            if indexPath.row == 0 {
+                titleLabel.text = "参加者ID" // 追加
+                field.text = narrativeState.participantID // 追加: 現在値を反映（既定 p001）
+                field.placeholder = "p001"
+                field.tag = NarrativeFieldTag.participantID.rawValue // 追加
+            } else {
+                titleLabel.text = "Backend URL" // 追加
+                field.text = narrativeState.backendBaseURL // 追加: 現在値を反映（空なら送信しない）
+                field.placeholder = "http://192.168.x.x:8000" // 追加: 空なら送信しない
+                field.keyboardType = .URL
+                field.tag = NarrativeFieldTag.backendURL.rawValue // 追加
+            }
+            field.addTarget(self, action: #selector(narrativeTextChanged(_:)), for: .editingChanged)
+
+            let stack = UIStackView(arrangedSubviews: [titleLabel, field])
+            stack.axis = .horizontal
+            stack.spacing = 8
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            cell.contentView.addSubview(stack)
+            NSLayoutConstraint.activate([
+                stack.leadingAnchor.constraint(equalTo: cell.contentView.leadingAnchor, constant: 16),
+                stack.trailingAnchor.constraint(equalTo: cell.contentView.trailingAnchor, constant: -16),
+                stack.topAnchor.constraint(equalTo: cell.contentView.topAnchor, constant: 8),
+                stack.bottomAnchor.constraint(equalTo: cell.contentView.bottomAnchor, constant: -8),
+            ])
             return cell
         }
 

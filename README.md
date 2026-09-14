@@ -1,6 +1,6 @@
 # MozcFlickKeyboard
 
-iPhone 専用の 12 キー日本語フリックキーボード（Custom Keyboard Extension）です。かな漢字変換エンジンに [Mozc](https://github.com/google/mozc) を用い、**完全オフライン**で動作します。ネットワーク通信を一切行わず、入力内容を外部へ送信しません。
+iPhone 専用の 12 キー日本語フリックキーボード（Custom Keyboard Extension）です。かな漢字変換エンジンに [Mozc](https://github.com/google/mozc) を用います。**通常のキーボード入力は完全に端末内で完結し、入力本文を外部へ送信しません。** 研究用の追加機能「お天気分」のみ、研究者が Backend URL を設定した場合に限り研究データ（回答・打鍵統計等）を任意送信します（既定はオフ。詳細は [docs/narrative-integration.md](docs/narrative-integration.md)）。
 
 > 研究用途（久保田研究室）で開発しています。名称・商標について「Google 日本語入力」の名称は使用しません（[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 参照）。
 
@@ -14,6 +14,12 @@ iPhone 専用の 12 キー日本語フリックキーボード（Custom Keyboard
 - **オフライン**: 変換・学習・ユーザー辞書はすべて端末内で完結
 - **構成**: ホストアプリ（設定・辞書管理）＋ Keyboard Extension（実際の入力）
 
+### 研究機能「お天気分」（micro-diary）
+
+- キーボード上部に短い質問バナー（朝の気分・夜の振り返り・外出/帰宅など）を1問だけ表示し、1〜2 タップまたは短い自由記述で回答できる研究用マイクロ日記機能です。
+- 回答は研究データ（`NarrativeEvent`）として端末内に保存され、**ホストアプリのテキスト欄には一切挿入されません**。通常入力の本文は収集・送信しません。
+- **Backend への送信は任意で既定オフ**（Backend URL 未設定なら端末内のみ）。実装・データ形状・操作方法・テスト方法・残課題は [docs/narrative-integration.md](docs/narrative-integration.md) を参照してください。
+
 主要ドキュメント:
 
 | ドキュメント | 内容 |
@@ -21,7 +27,8 @@ iPhone 専用の 12 キー日本語フリックキーボード（Custom Keyboard
 | [docs/architecture.md](docs/architecture.md) | 全体構成 / ターゲット責務 / Swift↔C++ 境界 / 状態遷移 |
 | [docs/ios-keyboard-limitations.md](docs/ios-keyboard-limitations.md) | Custom Keyboard Extension の制約 |
 | [docs/testing.md](docs/testing.md) | テスト方針と実行方法 |
-| [docs/privacy.md](docs/privacy.md) | プライバシー方針（完全オフライン） |
+| [docs/privacy.md](docs/privacy.md) | プライバシー方針（通常入力は端末内完結 / お天気分の任意送信） |
+| [docs/narrative-integration.md](docs/narrative-integration.md) | お天気分（micro-diary）の設計・データモデル・操作/テスト方法・残課題 |
 | [docs/performance.md](docs/performance.md) | 性能目標と測定方法 |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | ビルドエラーと解決 |
 | [docs/initial-research.md](docs/initial-research.md) | Mozc の取得元・固定バージョン・ビルド方式調査（調査担当が記載） |
@@ -184,8 +191,9 @@ APP_GROUP_ID           = group.com.tanaka05.MozcFlickKeyboard
 
 ## Full Access の要否
 
-- **不要**（Full Access なしで動作）。完全オフライン方針のため、ネットワークやペーストボード全体アクセスを要求しません。
-- ユーザー辞書・学習データは App Group 共有コンテナに保存し、Full Access は使いません。
+- **通常入力のみなら不要**（Full Access なしで動作）。通常入力の本文はネットワークやペーストボード全体アクセスを要求しません。
+- **お天気分の送信機能を使う場合**（設定で Backend URL を入力した場合）は、キーボード拡張からのネットワーク通信のため Full Access が必要です。既定は Backend URL 未設定＝送信なしのため Full Access も不要です。
+- ユーザー辞書・学習データは App Group 共有コンテナに保存します。
 - 制約の詳細は [docs/ios-keyboard-limitations.md](docs/ios-keyboard-limitations.md) を参照。
 
 ---

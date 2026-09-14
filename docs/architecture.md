@@ -147,3 +147,40 @@ Mozc は C++ で書かれているため、Swift から直接呼べません。�
   - CMake/GYP など旧経路より公式サポートが手厚い。
 - 具体的な取得元・固定リビジョン・確認済みビルドフラグは [initial-research.md](initial-research.md) を参照（調査担当が確定値を記載）。
 - 成果物（`.a` / `.xcframework`）は `out/mozc` に生成し、`scripts/generate_xcode_project.sh` が生成する Xcode プロジェクトへリンクします。
+
+---
+
+## 11. お天気分（Narrative）サブシステム
+
+研究用マイクロ日記「お天気分」を Shared（`MozcFlickShared`）へ新規追加した。日常イベントを検知／推定してキーボード上部に質問バナーを1問出し、回答を `NarrativeEvent` として保存する。通常の変換・入力経路には影響を与えず、回答はホストアプリのテキスト欄（`UITextDocumentProxy`）へ挿入しない。詳細な運用・データ形状は [narrative-integration.md](narrative-integration.md)、プライバシー方針は [privacy.md](privacy.md) を参照。
+
+処理は「Context → Trigger → Policy → Question → Banner → Answer → NarrativeEvent → Analyzer/PMTT → Repository」の一方向フローで構成する。
+
+```mermaid
+flowchart TD
+  subgraph Providers["ContextProvider (5種)"]
+    TimeP["TimeContextProvider"]
+    TypingP["TypingContextProvider (打鍵統計)"]
+    CalP["CalendarContextProvider (stub)"]
+    SwP["SwitchBotContextProvider (stub / Phase3)"]
+    ManP["ManualContextProvider (手動イベント)"]
+  end
+  Providers --> Ctx["CurrentContext"]
+  Ctx --> Engine["TriggerEngine.nextQuestion (最大1件)"]
+  Engine --> Triggers["QuestionTrigger 群 (優先順)"]
+  Triggers --> Policy["QuestionPolicy (機能ON/OFF / 1日上限 / snooze / 回答済み / cooldown)"]
+  Policy --> Pending["PendingQuestion"]
+  Pending --> Banner["NarrativeQuestionBanner (候補バー上)"]
+  Banner --> Answer["QuestionAnswer"]
+  Answer --> Event["NarrativeEvent"]
+  Event --> Analyzer["NarrativeAnalyzer (Mock)"]
+  Event --> PMTT["PMTTAdapter (Mock)"]
+  Event --> Hub["NarrativeRepositoryHub"]
+  Hub --> Local["LocalRepository (JSONL)"]
+  Hub --> Remote["RemoteRepository (URL未設定なら送信せず退避のみ / throwしない)"]
+```
+
+- **配置**: 純ロジック（Models / Catalog / State / Store / Repository / Context / Trigger / Policy / TypingMetrics / Analyzer / Recommendation / PMTT）は Shared に置き、UI（`NarrativeQuestionBanner`）は Keyboard 拡張、ダッシュボードは App に置く。UITextDocumentProxy へ触れるのは従来どおり Keyboard 拡張のみで、回答経路はそこを構造的に呼ばない。
+- **状態と保存**: 出題制御状態は App Group `UserDefaults`（`NarrativeState`）、イベント本体は App Group 共有コンテナ `Narrative/*.jsonl`（`NarrativeStore`、既存 `SafetyCheckLog` と同じ流儀で throw しない）。
+- **エラー設計**: 既存方針に合わせ、保存・送信のいずれも throw しない。送信は best-effort で、失敗時は `unsent_narrative.jsonl` へ退避（キーボード拡張の入力継続を最優先）。
+- **フェーズゲート**: Phase 1 は朝 / 夜 / 外出 / 帰宅の Trigger のみ有効。`TypingFatigueTrigger` / `LongSessionTrigger` は同梱するが既定 `enabled=false`（Phase 2）。`SwitchBotContextProvider` は stub（Phase 3）。`NarrativeAnalyzer` / `PMTTAdapter` / `RecommendationEngine` は Mock 実装で、CoreML / LLM / FastAPI 等へ差し替え可能なプロトコル境界を用意している（Phase 4）。

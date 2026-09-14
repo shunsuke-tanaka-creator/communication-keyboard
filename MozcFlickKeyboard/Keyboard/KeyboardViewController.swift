@@ -66,6 +66,38 @@ final class KeyboardViewController: UIInputViewController {
     /// 追加: 1分間隔で予定を再判定するタイマー。表示中のみ稼働。
     private var checkTimer: Timer?
 
+    // MARK: - お天気分（Narrative）状態
+
+    /// 追加: 出題制御の状態ストア（App Group UserDefaults）。
+    private let narrativeState = NarrativeState()
+
+    /// 追加: Trigger 評価の司令塔（makeDefault で構築）。
+    private lazy var narrativeEngine: TriggerEngine = TriggerEngine.makeDefault(state: narrativeState)
+
+    /// 追加: NarrativeEvent / ContextEvent の唯一の保存入口（ローカル必須 + リモート best-effort）。
+    private lazy var narrativeRepo: NarrativeRepositoryHub = NarrativeRepositoryHub(baseURL: narrativeState.backendBaseURL)
+
+    /// 追加: 打鍵特徴の集計器（本文は渡さず時刻・回数のみ）。
+    private let typingMetrics = TypingMetrics()
+
+    /// 追加: 回答の解析器（Mock、ルールベース）。
+    private let narrativeAnalyzer = MockNarrativeAnalyzer()
+
+    /// 追加: PMTT ノード対応付け（Mock、同期）。
+    private let narrativePMTT = MockPMTTAdapter()
+
+    /// 追加: いまバナーに表示中の質問（回答保存で参照）。
+    private var currentPending: PendingQuestion?
+
+    /// 追加: 研究入力モード（自由記述）中か。true の間は通常入力を proxy へ流さない。
+    private var researchInputMode = false
+
+    /// 追加: 研究入力モードの下書きバッファ（本文はここだけに溜め、proxy には出さない）。
+    private var researchDraft = ""
+
+    /// 追加: 自由入力に入る直前に選ばれていた選択肢 value（未選択なら nil）。決定時に answer.label へ入れる。
+    private var researchChosenOptionValue: String?
+
     // MARK: - ライフサイクル
 
     override func viewDidLoad() {
@@ -76,6 +108,7 @@ final class KeyboardViewController: UIInputViewController {
         setupKeyboardView()
         // 追加: 安否確認チェックボタン押下時の処理を配線する。
         keyboardView.onCheck = { [weak self] in self?.didTapSafetyCheck() }
+        wireNarrativeCallbacks() // 追加: お天気分バナーのコールバックを配線する
         applySettings()
         enableLoggingIfAllowed() // 追加: viewWillAppear が呼ばれない場合に備え、ここでも記録を有効化。
     }
@@ -101,6 +134,8 @@ final class KeyboardViewController: UIInputViewController {
             ])
         }
         NSLog("[MFK] viewWillAppear session started=\(started)") // 追加: セッション開始のデバッグ
+        narrativeRepo.flushUnsent() // 追加: オフライン退避分があれば再送を試みる（失敗しても無害）
+        evaluateNarrativeTriggers() // 追加: お天気分の出題判定（安否確認が無いときのみ質問を出す）
     }
 
     /// 追加: プライベートモード OFF のときだけ記録を有効化する共通ヘルパ。
@@ -185,6 +220,7 @@ final class KeyboardViewController: UIInputViewController {
         stopCheckTimer()
         checkTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             self?.updateInfoBar()
+            self?.evaluateNarrativeTriggers() // 追加: 60秒ごとにお天気分の出題判定も回す（夜トリガー等の時刻到達に対応）
         }
     }
 
@@ -213,9 +249,26 @@ final class KeyboardViewController: UIInputViewController {
             keyboardView.trailingAnchor.constraint(equalTo: guide.trailingAnchor),
             keyboardView.topAnchor.constraint(equalTo: guide.topAnchor),
             keyboardView.bottomAnchor.constraint(equalTo: guide.bottomAnchor),
-            keyboardView.heightAnchor.constraint(greaterThanOrEqualToConstant: 216),
         ])
+        // 追加: キーボード全体の高さは可変制約で管理する。ベースを 260pt に拡大し（キーを大きく）、
+        //       バナー表示時はその分だけ上乗せしてキー領域が縮まないようにする。
+        let baseHeight: CGFloat = 260
+        let hc = keyboardView.heightAnchor.constraint(greaterThanOrEqualToConstant: baseHeight)
+        hc.priority = .required
+        hc.isActive = true
+        keyboardHeightConstraint = hc // 追加: バナー表示で更新するため保持
+        keyboardBaseHeight = baseHeight // 追加: 上乗せ計算の基準
+        // 追加: バナー高さ変化をキーボード全体の高さへ反映する（キーを縮めずバナー分だけ背を高くする）。
+        keyboardView.onRequiredExtraHeightChanged = { [weak self] extra in
+            guard let self = self else { return }
+            self.keyboardHeightConstraint?.constant = self.keyboardBaseHeight + extra // 追加: ベース + バナー分
+        }
     }
+
+    /// 追加: キーボード全体の高さ制約。バナー表示時に定数を増やす。
+    private var keyboardHeightConstraint: NSLayoutConstraint?
+    /// 追加: バナー非表示時の基準高さ。
+    private var keyboardBaseHeight: CGFloat = 260
 
     /// App Group の設定を UI / 状態へ反映する。
     private func applySettings() {
@@ -298,6 +351,188 @@ final class KeyboardViewController: UIInputViewController {
             "selected": textDocumentProxy.selectedText ?? "",
         ])
     }
+
+    // MARK: - お天気分（Narrative）配線・出題
+
+    /// 追加: KeyboardView のバナーコールバックを controller の処理へ配線する。
+    ///       これらの経路は textDocumentProxy を一切呼ばない（回答は研究データとしてのみ保存）。
+    private func wireNarrativeCallbacks() {
+        keyboardView.onRecordTap = { [weak self] in self?.showManualEventPicker() } // 追加:「記録」→ 手動イベント展開
+        keyboardView.onQuestionOption = { [weak self] option in self?.handleOptionSelected(option) } // 追加: 選択肢回答
+        keyboardView.onQuestionSnooze = { [weak self] in self?.handleSnooze() } // 追加:「あとで」
+        keyboardView.onFreeTextStart = { [weak self] in self?.enterResearchInputMode() } // 追加:「自由入力」開始
+        keyboardView.onFreeTextCommit = { [weak self] in self?.commitResearchText() } // 追加: 自由記述「決定」
+        keyboardView.onFreeTextCancel = { [weak self] in self?.cancelResearchInputMode() } // 追加: 自由記述「キャンセル」
+        keyboardView.onManualEvent = { [weak self] event in self?.handleManualEvent(event) } // 追加: 手動イベント選択
+    }
+
+    /// 追加: 出題判定。安否確認が出ている間・機能OFF・既に質問表示中は何もしない（同時1問）。
+    private func evaluateNarrativeTriggers() {
+        guard narrativeState.narrativeEnabled else { return } // 追加: 機能OFFなら早期リターン
+        guard pendingCheck == nil else { return } // 追加: 安否確認が出ている間は Narrative 質問を出さない
+        guard currentPending == nil else { return } // 追加: 既に質問表示中なら二重表示しない
+        guard !researchInputMode else { return } // 追加: 研究入力中は判定しない
+
+        let now = Date() // 追加: 評価基準時刻
+        let isFirst = narrativeState.markKeyboardUse(at: now) // 追加: 当日初回か（朝トリガー用）
+        let typing = typingMetrics.snapshot(now: now) // 追加: 現在の打鍵特徴（本文なし）
+
+        guard let pending = narrativeEngine.nextQuestion(now: now, isFirstKeyboardUseToday: isFirst, typing: typing) else { return } // 追加: 出題なし
+        presentQuestion(pending, now: now) // 追加: バナーへ提示
+    }
+
+    /// 追加: 質問をバナーへ提示し、表示済みとして記録する。
+    private func presentQuestion(_ pending: PendingQuestion, now: Date) {
+        var p = pending // 追加: questionShownAt を埋めるため可変にする
+        p.questionShownAt = now // 追加: 表示時刻
+        currentPending = p // 追加: 回答保存で参照
+        narrativeState.markShown(kind: p.kind, at: now) // 追加: cooldown 起点を記録
+        keyboardView.showQuestion(p) // 追加: バナー表示（高さ64）
+        NSLog("[MFK-Narrative] question shown kind=\(p.kind.rawValue) eventType=\(p.eventType)") // 追加: デバッグ
+    }
+
+    /// 追加: 選択肢が回答された。回答を保存し、必要なら手動イベントを消費してバナーを閉じる。
+    private func handleOptionSelected(_ option: QuestionOption) {
+        guard let pending = currentPending else { return } // 追加: 質問が無ければ無視
+        let answer = QuestionAnswer(label: option.value, freeText: nil) // 追加: value を保存（label 仕様に合わせる）
+        saveAnswer(pending: pending, answer: answer) // 追加: 保存フロー
+    }
+
+    /// 追加:「あとで」。種別を snoozeInterval 後まで再表示しないよう記録してバナーを閉じる。
+    private func handleSnooze() {
+        guard let pending = currentPending else { return } // 追加: 質問が無ければ無視
+        let now = Date() // 追加: 基準時刻
+        narrativeState.markSnoozed(kind: pending.kind, until: now.addingTimeInterval(NarrativeConfig.snoozeInterval)) // 追加: snooze 記録
+        NSLog("[MFK-Narrative] snooze kind=\(pending.kind.rawValue)") // 追加: デバッグ
+        dismissBanner() // 追加: バナーを閉じる
+    }
+
+    /// 追加: 回答保存フロー。NarrativeEvent を作り、解析（Mock）→ PMTT → repo.save → 状態更新までを行う。
+    ///       この経路は textDocumentProxy を一切呼ばない。
+    private func saveAnswer(pending: PendingQuestion, answer: QuestionAnswer) {
+        let now = Date() // 追加: 回答時刻
+        let typing = typingMetrics.snapshot(now: now) // 追加: 打鍵特徴（本文なし）
+        var event = NarrativeEvent.make(from: pending, answer: answer, typing: typing, answeredAt: now) // 追加: イベント生成
+
+        // 追加: 解析は Mock（同期的に emotion/experienceType を算出）。UI を止めない軽量処理。
+        let value = answer.label ?? answer.freeText // 追加: 判定入力
+        let experience = narrativeAnalyzer.experienceClass(for: value, kind: pending.kind) // 追加: 経験タイプ
+        let emotion = emotionClass(for: value) // 追加: 感情ラベル
+        event.narrative = NarrativeEvent.Narrative(summary: event.narrative?.summary, emotion: emotion, experienceType: experience) // 追加: 解析結果を反映
+        event.pmtt = narrativePMTT.link(event: event) // 追加: PMTT ノード対応付け
+
+        narrativeRepo.save(event) // 追加: ローカル JSONL + リモート best-effort（throw しない）
+        narrativeState.markAnswered(kind: pending.kind, on: now) // 追加: 当日回答済み・1日上限に反映
+        narrativeState.updateTypingBaseline(with: typing) // 追加: 打鍵ベースライン更新
+        NSLog("[MFK-Narrative] answer saved kind=\(pending.kind.rawValue) emotion=\(emotion) exp=\(experience)") // 追加: デバッグ
+
+        consumeManualEventsIfNeeded(for: pending) // 追加: 外出/帰宅由来なら手動イベントを消費
+        dismissBanner() // 追加: バナーを閉じる
+    }
+
+    /// 追加: 感情ラベルの簡易マッピング（Analyzer の emotionClass 相当を同期で持つ）。
+    private func emotionClass(for value: String?) -> String {
+        switch value {
+        case "bad", "slightly_tired", "tired", "difficult": return "negative"
+        case "good", "helpful": return "positive"
+        default: return "neutral"
+        }
+    }
+
+    /// 追加: 外出先/外出評価の回答を保存したら、対応する手動イベントをキューから取り除く（二重処理防止）。
+    private func consumeManualEventsIfNeeded(for pending: PendingQuestion) {
+        guard pending.kind == .outingDestination || pending.kind == .outingEvaluation else { return } // 追加: 対象外は消費しない
+        _ = narrativeState.dequeueAllManualEvents() // 追加: 消費して次回の再出題を防ぐ
+        NSLog("[MFK-Narrative] manual events dequeued after \(pending.kind.rawValue)") // 追加: デバッグ
+    }
+
+    /// 追加: バナーを閉じて表示状態を初期化する。
+    private func dismissBanner() {
+        currentPending = nil // 追加: 表示中質問を解除
+        researchInputMode = false // 追加: 研究入力を確実に解除
+        researchDraft = "" // 追加: 下書きを消す
+        researchChosenOptionValue = nil // 追加: 選択退避を消す
+        keyboardView.hideQuestion() // 追加: 高さ0 + 非表示
+    }
+
+    // MARK: - 研究入力モード（自由記述）
+
+    /// 追加:「自由入力」開始。研究入力モードへ入り、以降のフリック入力を researchDraft へ流す。
+    private func enterResearchInputMode() {
+        guard let pending = currentPending else { return } // 追加: 質問が無ければ無視
+        researchChosenOptionValue = nil // 追加: 選択肢は未選択（自由記述のみ）
+        researchDraft = "" // 追加: 下書き初期化
+        researchInputMode = true // 追加: モード ON（入力ハンドラの分岐に使う）
+        keyboardView.setResearchFreeTextMode(true) // 追加: バナーを自由記述 UI へ
+        keyboardView.setResearchDraft(researchDraft) // 追加: 空の下書きを表示
+        NSLog("[MFK-Narrative] research-mode enter kind=\(pending.kind.rawValue)") // 追加: デバッグ
+    }
+
+    /// 追加: 自由記述「決定」。researchDraft を answer.freeText として保存する。
+    private func commitResearchText() {
+        guard let pending = currentPending else { return } // 追加: 質問が無ければ無視
+        let trimmed = researchDraft.trimmingCharacters(in: .whitespacesAndNewlines) // 追加: 前後空白を除去
+        let answer = QuestionAnswer(label: researchChosenOptionValue, freeText: trimmed.isEmpty ? nil : trimmed) // 追加: 回答生成
+        NSLog("[MFK-Narrative] research-mode exit(commit) length=\(trimmed.count)") // 追加: デバッグ（本文は出さない）
+        researchInputMode = false // 追加: モード OFF（保存前に解除）
+        saveAnswer(pending: pending, answer: answer) // 追加: 保存フロー（内部で dismiss）
+    }
+
+    /// 追加: 自由記述「キャンセル」。保存せず選択肢表示へ戻す（質問は残す）。
+    private func cancelResearchInputMode() {
+        researchInputMode = false // 追加: モード OFF
+        researchDraft = "" // 追加: 下書き破棄
+        researchChosenOptionValue = nil // 追加: 選択退避破棄
+        keyboardView.setResearchFreeTextMode(false) // 追加: 選択肢 UI へ戻す
+        NSLog("[MFK-Narrative] research-mode exit(cancel)") // 追加: デバッグ
+    }
+
+    /// 追加: 研究入力中の下書きへ文字を追記してバナー表示を更新する（proxy には出さない）。
+    private func appendResearchText(_ text: String) {
+        researchDraft.append(text) // 追加: 下書きに追記
+        keyboardView.setResearchDraft(researchDraft) // 追加: バナー表示更新
+    }
+
+    /// 追加: 研究入力中の下書きから1文字削除してバナー表示を更新する。
+    private func deleteResearchText() {
+        if !researchDraft.isEmpty { researchDraft.removeLast() } // 追加: 末尾1文字削除
+        keyboardView.setResearchDraft(researchDraft) // 追加: バナー表示更新
+    }
+
+    // MARK: - 手動イベント（infoBar「記録」）
+
+    /// 追加:「記録」→ 手動イベント4ボタンをバナーへ展開する。
+    private func showManualEventPicker() {
+        guard currentPending == nil, !researchInputMode else { return } // 追加: 質問表示中/研究入力中は開かない（同時1問）
+        keyboardView.showManualEventPicker() // 追加: 手動イベントボタン表示
+        NSLog("[MFK-Narrative] manual picker shown") // 追加: デバッグ
+    }
+
+    /// 追加: 手動イベントが選ばれた。起床は即記録、外出/帰宅/就寝はキューへ積んで再評価する。
+    private func handleManualEvent(_ event: ManualEvent) {
+        let now = Date() // 追加: 基準時刻
+        switch event {
+        case .wakeUp:
+            // 追加: 起床は質問を伴わない ContextEvent として即保存（キューには積まない）。
+            let snapshot = ContextSnapshot(timeOfDay: TimeOfDay.label(for: now),
+                                           typingActive: false,
+                                           calendarBusy: false,
+                                           externalTrigger: "manual_wake_up") // 追加: 起床の文脈
+            let ctx = ContextEvent(participantID: narrativeState.participantID,
+                                   eventType: "wake_up",
+                                   detectedAt: now,
+                                   source: "keyboard",
+                                   context: snapshot) // 追加: 文脈イベント生成
+            narrativeRepo.saveContext(ctx) // 追加: 保存（throw しない）
+            NSLog("[MFK-Narrative] manual event handled wake_up") // 追加: デバッグ
+        case .outing, .returnHome, .sleep:
+            // 追加: 外出/帰宅は質問トリガーの契機、就寝は夜の振り返りを可能にするためキューへ積む。
+            narrativeState.enqueueManualEvent(event, at: now) // 追加: キュー投入
+            NSLog("[MFK-Narrative] manual event handled \(event.rawValue)") // 追加: デバッグ
+        }
+        keyboardView.hideQuestion() // 追加: ピッカーを閉じる
+        evaluateNarrativeTriggers() // 追加: 外出/帰宅の質問を即座に出せるよう再評価
+    }
 }
 
 // MARK: - KeyboardActionDelegate（KeyboardView からの入力を InputState / proxy へ反映）
@@ -305,6 +540,12 @@ final class KeyboardViewController: UIInputViewController {
 extension KeyboardViewController: KeyboardActionDelegate {
 
     func keyboardDidInput(kana: String) {
+        // 追加: 研究入力モード中は本文を researchDraft へ流し、proxy / inputState には一切触れない。
+        if researchInputMode {
+            appendResearchText(kana) // 追加: 下書きへ追記
+            return // 追加: 通常入力経路へ進ませない
+        }
+        typingMetrics.recordKeystroke(at: Date()) // 追加: 打鍵を集計（本文は渡さず時刻のみ）
         let result = inputState.input(fixed: kana)
         NSLog("[MFK] keyboardDidInput kana='\(kana)' -> composition='\(result.composition)' candidates=\(result.candidates.count)") // 追加: 入力とcompositionのデバッグ
         // 追加: 入力かなと未確定よみ・候補数を記録。
@@ -322,10 +563,16 @@ extension KeyboardViewController: KeyboardActionDelegate {
     }
 
     func keyboardDidDeleteBackward() {
+        // 追加: 研究入力モード中は researchDraft を1文字削るだけ（proxy / inputState には触れない）。
+        if researchInputMode {
+            deleteResearchText() // 追加: 下書き末尾を削除
+            return // 追加: 通常削除経路へ進ませない
+        }
         if inputState.currentResult.composition.isEmpty {
             // 未確定が無ければ実テキストを削除。
             NSLog("[MFK] keyboardDidDeleteBackward -> proxy.deleteBackward (composition empty)") // 追加: 削除経路のデバッグ
             sessionLogger.log(type: "delete", data: ["target": "text"]) // 追加: 実テキスト削除を記録
+            typingMetrics.recordBackspace(at: Date()) // 追加: backspace を集計（時刻のみ）
             textDocumentProxy.deleteBackward()
             logContext() // 追加: 実テキスト削除後のカーソル付近文脈を記録
         } else {
@@ -377,6 +624,11 @@ extension KeyboardViewController: KeyboardActionDelegate {
     }
 
     func keyboardDidInputSpace() {
+        // 追加: 研究入力モード中は下書きへ半角スペースを追記（proxy には触れない）。
+        if researchInputMode {
+            appendResearchText(" ") // 追加: 下書きへスペース追記
+            return // 追加: 通常経路へ進ませない
+        }
         if inputState.currentResult.composition.isEmpty {
             // 未確定が無ければ空白を直接入力。
             sessionLogger.log(type: "space", data: [:]) // 追加: 空白入力を記録
@@ -396,6 +648,11 @@ extension KeyboardViewController: KeyboardActionDelegate {
     }
 
     func keyboardDidTapReturn() {
+        // 追加: 研究入力モード中は改行を下書きへ追記（proxy には触れない）。
+        if researchInputMode {
+            appendResearchText("\n") // 追加: 下書きへ改行追記
+            return // 追加: 通常経路へ進ませない
+        }
         if inputState.currentResult.composition.isEmpty {
             sessionLogger.log(type: "return", data: [:]) // 追加: 改行を記録
             textDocumentProxy.insertText("\n")
