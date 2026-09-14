@@ -12,6 +12,7 @@ final class RootViewController: UIViewController {
         case license
         case debug
         case logs // 追加: 入力ログ閲覧
+        case checks // 追加: 安否確認ログ閲覧
 
         var title: String {
             switch self {
@@ -19,6 +20,7 @@ final class RootViewController: UIViewController {
             case .license: return "ライセンス"
             case .debug:    return "デバッグ情報"
             case .logs:     return "入力ログ" // 追加
+            case .checks:   return "安否確認ログ" // 追加
             }
         }
     }
@@ -119,6 +121,7 @@ extension RootViewController: UITableViewDataSource, UITableViewDelegate {
         case .license:  next = LicenseViewController()
         case .debug:    next = DebugInfoViewController()
         case .logs:     next = SessionLogsViewController() // 追加: 入力ログ閲覧
+        case .checks:   next = SafetyCheckLogsViewController() // 追加: 安否確認ログ閲覧
         }
         navigationController?.pushViewController(next, animated: true)
     }

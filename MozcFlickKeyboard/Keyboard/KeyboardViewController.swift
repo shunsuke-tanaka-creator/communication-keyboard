@@ -60,6 +60,12 @@ final class KeyboardViewController: UIInputViewController {
     /// 追加: このセッションの変換要求回数（メタ情報）。
     private var conversionCount = 0
 
+    /// 追加: いま表示中の安否確認チェック対象（押下時にログへ記録する）。
+    private var pendingCheck: ScheduleItem?
+
+    /// 追加: 1分間隔で予定を再判定するタイマー。表示中のみ稼働。
+    private var checkTimer: Timer?
+
     // MARK: - ライフサイクル
 
     override func viewDidLoad() {
@@ -68,6 +74,8 @@ final class KeyboardViewController: UIInputViewController {
         print("[MFK-print] viewDidLoad KeyboardViewController loaded") // 追加: NSLogが出ない場合の確認用 print
         view.backgroundColor = .systemBackground // ダークモード追従
         setupKeyboardView()
+        // 追加: 安否確認チェックボタン押下時の処理を配線する。
+        keyboardView.onCheck = { [weak self] in self?.didTapSafetyCheck() }
         applySettings()
         enableLoggingIfAllowed() // 追加: viewWillAppear が呼ばれない場合に備え、ここでも記録を有効化。
     }
@@ -80,6 +88,7 @@ final class KeyboardViewController: UIInputViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         updateInfoBar()
+        startCheckTimer() // 追加: 表示中は1分間隔で予定を再判定する。
         // 追加: セッション記録を有効化（プライベートモード ON のときは記録しない）。
         let started = enableLoggingIfAllowed()
         if started {
@@ -108,39 +117,81 @@ final class KeyboardViewController: UIInputViewController {
     /// 追加: キーボードが閉じたらセッションを終了しファイルを閉じる。
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        stopCheckTimer() // 追加: 表示中のみ稼働するタイマーを止める。
         sessionLogger.log(type: "meta", data: ["conversionCount": "\(conversionCount)"])
         sessionLogger.stop()
         NSLog("[MFK] viewDidDisappear session stopped conversionCount=\(conversionCount)") // 追加: セッション終了のデバッグ
     }
 
-    /// 変更: App Group の予定配列から「現在時刻以降で最も近い次の予定」を1つバーに表示する（表示のみ）。
+    /// 変更: 予定配列から表示内容を決める。判定順は「安否確認チェック対象 → 次の予定」。
+    /// チェック対象（needsCheck かつ 当日曜日 かつ 5分前〜+30分 かつ 当日未チェック）があれば
+    /// 時刻が早い1件を質問文 + チェックボタンで表示する。無ければ従来どおり「次の予定」を表示する。
     private func updateInfoBar() {
         let list = sharedDefaults?.stringArray(forKey: SettingsKeys.schedules) ?? []
+        let items = ScheduleItem.parse(list)
         let now = Date()
         let cal = Calendar.current
         let nowMinutes = cal.component(.hour, from: now) * 60 + cal.component(.minute, from: now)
 
-        // 各要素 "HH:mm\t文言" を (分, 時刻文字列, 文言) に変換。
-        var next: (minutes: Int, time: String, text: String)?
-        for item in list {
-            let parts = item.components(separatedBy: "\t")
-            guard let time = parts.first, !time.isEmpty else { continue }
-            let text = parts.count > 1 ? parts[1] : ""
-            let hm = time.split(separator: ":")
-            guard hm.count == 2, let h = Int(hm[0]), let m = Int(hm[1]) else { continue }
-            let minutes = h * 60 + m
-            guard minutes >= nowMinutes else { continue } // 過去はスキップ
-            if next == nil || minutes < next!.minutes {
-                next = (minutes, time, text)
-            }
+        // 追加: 安否確認チェック対象を最優先で判定する。
+        let checked = SafetyCheckLog.checkedKeys(on: now)
+        // 追加: 各予定がなぜチェック対象になる/ならないかを可視化するデバッグログ。
+        for it in items {
+            NSLog("[MFK] schedule item time=\(it.time) text='\(it.text)' needsCheck=\(it.needsCheck) weekdays=\(it.weekdays) active=\(it.isActive(on: now)) inWindow=\(it.isInWindow(nowMinutes: nowMinutes)) checked=\(checked.contains(it.logKey)) nowMinutes=\(nowMinutes)")
+        }
+        let target = items
+            .filter { $0.needsCheck && $0.isActive(on: now) && $0.isInWindow(nowMinutes: nowMinutes) && !checked.contains($0.logKey) }
+            .sorted { ($0.minutes ?? 0) < ($1.minutes ?? 0) }
+            .first
+
+        if let t = target {
+            pendingCheck = t
+            keyboardView.setCheckPrompt(t.text.isEmpty ? "確認してください" : t.text)
+            NSLog("[MFK] updateInfoBar check target=\(t.logKey)") // 追加: チェック対象のデバッグ
+            return
         }
 
+        // チェック対象なし → 従来の「次の予定」表示に戻す。
+        pendingCheck = nil
+        keyboardView.clearCheckPrompt()
+        var next: ScheduleItem?
+        for item in items {
+            guard let m = item.minutes, m >= nowMinutes else { continue } // 過去はスキップ
+            if next == nil || m < (next?.minutes ?? Int.max) {
+                next = item
+            }
+        }
         if let n = next {
             keyboardView.setInfoText("次の予定 \(n.time) \(n.text)")
         } else {
             keyboardView.setInfoText("")
         }
-        NSLog("[MFK] updateInfoBar next=\(String(describing: next))") // 追加: 次の予定のデバッグ
+        NSLog("[MFK] updateInfoBar next=\(String(describing: next?.logKey))") // 追加: 次の予定のデバッグ
+    }
+
+    /// 追加: 安否確認のチェックボタンが押されたときの処理。ログへ記録し表示を消す。
+    private func didTapSafetyCheck() {
+        guard let item = pendingCheck else { return }
+        SafetyCheckLog.append(item)
+        sessionLogger.log(type: "safetyCheck", data: ["scheduled": item.time, "question": item.text])
+        NSLog("[MFK] didTapSafetyCheck logged=\(item.logKey)") // 追加: チェック記録のデバッグ
+        pendingCheck = nil
+        keyboardView.clearCheckPrompt() // 追加: 押したら即座に表示を消す
+        updateInfoBar() // 次の対象へ切替（無ければ「次の予定」表示に戻る）
+    }
+
+    /// 追加: 1分間隔で updateInfoBar を呼ぶタイマーを開始する。
+    private func startCheckTimer() {
+        stopCheckTimer()
+        checkTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.updateInfoBar()
+        }
+    }
+
+    /// 追加: タイマーを停止する。
+    private func stopCheckTimer() {
+        checkTimer?.invalidate()
+        checkTimer = nil
     }
 
     override func textDidChange(_ textInput: UITextInput?) {

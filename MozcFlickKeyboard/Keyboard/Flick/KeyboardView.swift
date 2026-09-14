@@ -39,16 +39,38 @@ final class KeyboardView: UIView {
     /// 展開時の候補一覧（既定は非表示）。
     let candidateList = CandidateListView()
 
-    /// 追加: 最下層に表示する情報バー（予定・タイマー文言など）。入力欄には書かず表示のみ。
-    let infoBar: UILabel = {
+    /// 追加: 情報バー内の文言ラベル（予定・安否確認の質問文など）。
+    private let infoLabel: UILabel = {
         let l = UILabel()
-        l.translatesAutoresizingMaskIntoConstraints = false
         l.font = .systemFont(ofSize: 13, weight: .medium)
         l.textColor = .secondaryLabel
         l.textAlignment = .center
         l.text = ""
         return l
     }()
+
+    /// 追加: 安否確認のチェックボタン。既定は非表示。押下で onCheck を呼ぶ。
+    private let checkButton: UIButton = {
+        let b = UIButton(type: .system)
+        b.setTitle("チェック", for: .normal)
+        b.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        b.setContentHuggingPriority(.required, for: .horizontal)
+        b.isHidden = true
+        return b
+    }()
+
+    /// 追加: 最下層に表示する情報バー（文言ラベル + チェックボタン）。入力欄には書かず表示のみ。
+    private lazy var infoBar: UIStackView = {
+        let s = UIStackView(arrangedSubviews: [infoLabel, checkButton])
+        s.axis = .horizontal
+        s.spacing = 8
+        s.alignment = .center
+        s.translatesAutoresizingMaskIntoConstraints = false
+        return s
+    }()
+
+    /// 追加: チェックボタン押下時のコールバック。KeyboardViewController が設定する。
+    var onCheck: (() -> Void)?
 
     /// キー全体を縦に積む親スタック。
     private let rootStack: UIStackView = {
@@ -86,6 +108,8 @@ final class KeyboardView: UIView {
         // 追加: 候補一覧は展開時にキー領域を覆うため最前面に置く（rootStack より後に追加）。
         addSubview(candidateList)
 
+        checkButton.addTarget(self, action: #selector(checkButtonTapped), for: .touchUpInside) // 追加
+
         candidateBar.onSelect = { [weak self] candidate in
             self?.actionDelegate?.keyboardDidSelectCandidate(id: candidate.id)
         }
@@ -115,11 +139,11 @@ final class KeyboardView: UIView {
             // 変更: rootStack の下端を親からではなく infoBar の上に付け替える。
             rootStack.bottomAnchor.constraint(equalTo: infoBar.topAnchor, constant: -3),
 
-            // 追加: 情報バーを最下層に固定（高さ 20pt）。
+            // 追加: 情報バーを最下層に固定（高さ 36pt。チェックボタンを収めるため拡大）。
             infoBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 3),
             infoBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -3),
             infoBar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
-            infoBar.heightAnchor.constraint(equalToConstant: 20),
+            infoBar.heightAnchor.constraint(equalToConstant: 36),
         ])
 
         rebuildKeys()
@@ -167,7 +191,25 @@ final class KeyboardView: UIView {
 
     /// 追加: 最下層の情報バーに文言を設定する（表示のみ）。
     func setInfoText(_ text: String) {
-        infoBar.text = text
+        infoLabel.text = text
+    }
+
+    /// 追加: 安否確認のチェック表示にする（質問文 + チェックボタン表示）。
+    func setCheckPrompt(_ text: String) {
+        infoLabel.text = text
+        infoLabel.textColor = .label
+        checkButton.isHidden = false
+    }
+
+    /// 追加: 安否確認のチェック表示を解除する（通常の情報表示へ戻す）。
+    func clearCheckPrompt() {
+        infoLabel.textColor = .secondaryLabel
+        checkButton.isHidden = true
+    }
+
+    /// 追加: チェックボタン押下。
+    @objc private func checkButtonTapped() {
+        onCheck?()
     }
 
     // MARK: - キー構築（データ駆動）

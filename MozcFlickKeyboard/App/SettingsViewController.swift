@@ -49,10 +49,25 @@ final class SettingsViewController: UIViewController {
     /// App Group 共有の UserDefaults。
     private let defaults = UserDefaults(suiteName: AppConfig.appGroupID)
 
-    /// 追加: 予定の配列（各要素は "HH:mm\t文言"）。UserDefaults と同期する。
+    /// 追加: 予定の配列（各要素は TSV）。UserDefaults と同期する。
     private var schedules: [String] {
         get { defaults?.stringArray(forKey: SettingsKeys.schedules) ?? [] }
         set { defaults?.set(newValue, forKey: SettingsKeys.schedules) }
+    }
+
+    /// 追加: 指定行の ScheduleItem を取得する。
+    private func item(at row: Int) -> ScheduleItem? {
+        let list = schedules
+        guard row < list.count else { return nil }
+        return ScheduleItem(tsv: list[row])
+    }
+
+    /// 追加: 指定行の ScheduleItem を保存する。
+    private func setItem(_ item: ScheduleItem, at row: Int) {
+        var list = schedules
+        guard row < list.count else { return }
+        list[row] = item.tsv
+        schedules = list
     }
 
     override func viewDidLoad() {
@@ -115,42 +130,61 @@ final class SettingsViewController: UIViewController {
         defaults?.set(sender.isOn, forKey: item.key)
     }
 
-    /// 追加: 予定を1件追加する（時刻は現在時刻を既定、文言は空）。
+    /// 追加: 予定を1件追加する（時刻は現在時刻を既定、文言は空、チェックOFF、毎日）。
     @objc private func addSchedule() {
         var list = schedules
         let f = DateFormatter()
         f.dateFormat = "HH:mm"
         f.locale = Locale(identifier: "en_US_POSIX")
         let now = f.string(from: Date()) // 追加: 既定は現在時刻
-        list.append("\(now)\t") // "HH:mm\t文言"
+        let item = ScheduleItem(time: now, text: "", needsCheck: false, weekdays: "1111111")
+        list.append(item.tsv)
         schedules = list
         tableView.reloadData()
     }
 
     /// 追加: 予定文言の編集を保存する。tag = 行番号。
     @objc private func scheduleFieldChanged(_ sender: UITextField) {
-        let row = sender.tag
-        var list = schedules
-        guard row < list.count else { return }
-        let parts = list[row].components(separatedBy: "\t")
-        let time = parts.first ?? ""
-        list[row] = "\(time)\t\(sender.text ?? "")"
-        schedules = list
+        guard var it = item(at: sender.tag) else { return }
+        it.text = sender.text ?? ""
+        setItem(it, at: sender.tag)
     }
 
     /// 追加: 時刻ピッカーの選択を "HH:mm" にして保存する。tag = 行番号。
     @objc private func scheduleTimeChanged(_ sender: UIDatePicker) {
-        let row = sender.tag
-        var list = schedules
-        guard row < list.count else { return }
+        guard var it = item(at: sender.tag) else { return }
         let f = DateFormatter()
         f.dateFormat = "HH:mm"
         f.locale = Locale(identifier: "en_US_POSIX")
-        let time = f.string(from: sender.date)
-        let parts = list[row].components(separatedBy: "\t")
-        let text = parts.count > 1 ? parts[1] : ""
-        list[row] = "\(time)\t\(text)"
-        schedules = list
+        it.time = f.string(from: sender.date)
+        setItem(it, at: sender.tag)
+    }
+
+    /// 追加: チェック要否スイッチの変更を保存する。tag = 行番号。
+    @objc private func scheduleCheckChanged(_ sender: UISwitch) {
+        guard var it = item(at: sender.tag) else { return }
+        it.needsCheck = sender.isOn
+        setItem(it, at: sender.tag)
+        NSLog("[MFK] scheduleCheckChanged row=\(sender.tag) needsCheck=\(it.needsCheck) tsv='\(it.tsv)'") // 追加: 保存確認
+    }
+
+    /// 追加: 曜日ボタンのトグルを保存する。tag = 行番号 * 10 + 曜日index(0=日..6=土)。
+    @objc private func scheduleWeekdayTapped(_ sender: UIButton) {
+        let row = sender.tag / 10
+        let index = sender.tag % 10
+        guard var it = item(at: row) else { return }
+        var chars = Array(it.weekdays)
+        while chars.count < 7 { chars.append("1") }
+        chars[index] = chars[index] == "1" ? "0" : "1"
+        it.weekdays = String(chars)
+        setItem(it, at: row)
+        applyWeekdayButtonStyle(sender, on: chars[index] == "1")
+    }
+
+    /// 追加: 曜日ボタンの見た目（選択/非選択）を反映する。
+    private func applyWeekdayButtonStyle(_ button: UIButton, on: Bool) {
+        button.backgroundColor = on ? .systemBlue : .secondarySystemBackground
+        button.setTitleColor(on ? .white : .secondaryLabel, for: .normal)
     }
 }
 
@@ -179,7 +213,7 @@ extension SettingsViewController: UITableViewDataSource {
     }
 
     func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
-        return section == 1 ? "予定（キーボードを開くと次の予定を表示）" : nil // 変更
+        return section == 1 ? "予定・安否確認（時刻の5分前から表示）" : nil // 変更
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
@@ -188,12 +222,10 @@ extension SettingsViewController: UITableViewDataSource {
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        // 追加: section1 は予定1件（時刻 + 文言）の入力行。
+        // 追加: section1 は予定1件の入力行（上段: 時刻+文言、下段: チェック要否+曜日）。
         if indexPath.section == 1 {
             let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
-            let parts = schedules[indexPath.row].components(separatedBy: "\t")
-            let time = parts.first ?? ""
-            let text = parts.count > 1 ? parts[1] : ""
+            let it = item(at: indexPath.row) ?? ScheduleItem(time: "", text: "", needsCheck: false, weekdays: "1111111")
 
             // 変更: 時刻はテキスト入力ではなく UIDatePicker（時刻ホイール）で選ぶ。
             let timePicker = UIDatePicker()
@@ -206,20 +238,58 @@ extension SettingsViewController: UITableViewDataSource {
             let f = DateFormatter()
             f.dateFormat = "HH:mm"
             f.locale = Locale(identifier: "en_US_POSIX")
-            if let d = f.date(from: time) { timePicker.date = d }
+            if let d = f.date(from: it.time) { timePicker.date = d }
             timePicker.addTarget(self, action: #selector(scheduleTimeChanged(_:)), for: .valueChanged)
             timePicker.setContentHuggingPriority(.required, for: .horizontal)
 
             let textField = UITextField()
             textField.borderStyle = .roundedRect
-            textField.placeholder = "予定の文言（例: 会議）"
-            textField.text = text
+            textField.placeholder = "文言 / 質問（例: 朝ごはん食べましたか）"
+            textField.text = it.text
             textField.delegate = self
             textField.tag = indexPath.row // 変更: 文言のみ。tag は行番号。
             textField.addTarget(self, action: #selector(scheduleFieldChanged(_:)), for: .editingChanged)
 
-            let stack = UIStackView(arrangedSubviews: [timePicker, textField])
-            stack.axis = .horizontal
+            let topStack = UIStackView(arrangedSubviews: [timePicker, textField])
+            topStack.axis = .horizontal
+            topStack.spacing = 8
+
+            // 追加: 下段 — チェック要否スイッチ + 曜日7ボタン。
+            let checkLabel = UILabel()
+            checkLabel.text = "チェック"
+            checkLabel.font = .systemFont(ofSize: 14)
+            checkLabel.setContentHuggingPriority(.required, for: .horizontal)
+
+            let checkSwitch = UISwitch()
+            checkSwitch.isOn = it.needsCheck
+            checkSwitch.tag = indexPath.row
+            checkSwitch.addTarget(self, action: #selector(scheduleCheckChanged(_:)), for: .valueChanged)
+
+            let weekdayStack = UIStackView()
+            weekdayStack.axis = .horizontal
+            weekdayStack.distribution = .fillEqually
+            weekdayStack.spacing = 4
+            let names = ["日", "月", "火", "水", "木", "金", "土"]
+            let wdChars = Array(it.weekdays.count == 7 ? it.weekdays : "1111111")
+            for i in 0..<7 {
+                let b = UIButton(type: .system)
+                b.setTitle(names[i], for: .normal)
+                b.titleLabel?.font = .systemFont(ofSize: 13, weight: .medium)
+                b.layer.cornerRadius = 6
+                b.tag = indexPath.row * 10 + i
+                b.addTarget(self, action: #selector(scheduleWeekdayTapped(_:)), for: .touchUpInside)
+                applyWeekdayButtonStyle(b, on: wdChars[i] == "1")
+                b.heightAnchor.constraint(equalToConstant: 32).isActive = true
+                weekdayStack.addArrangedSubview(b)
+            }
+
+            let bottomStack = UIStackView(arrangedSubviews: [checkLabel, checkSwitch, weekdayStack])
+            bottomStack.axis = .horizontal
+            bottomStack.spacing = 8
+            bottomStack.alignment = .center
+
+            let stack = UIStackView(arrangedSubviews: [topStack, bottomStack])
+            stack.axis = .vertical
             stack.spacing = 8
             stack.translatesAutoresizingMaskIntoConstraints = false
             cell.contentView.addSubview(stack)
