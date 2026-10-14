@@ -6,5 +6,11 @@
 	<array>
 		<string>group.com.tanaka05.MozcFlickKeyboard</string>
 	</array>
+	<key>com.apple.developer.healthkit</key>
+	<true/>
+	<key>com.apple.developer.healthkit.background-delivery</key>
+	<true/>
+	<key>com.apple.developer.healthkit.access</key>
+	<array/>
 </dict>
 </plist>

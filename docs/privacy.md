@@ -1,15 +1,17 @@
 # プライバシー方針
 
-MozcFlickKeyboard の**通常のキーボード入力は完全に端末内で完結し、入力した本文を外部へ一切送信しません**。研究用の追加機能「お天気分」（micro-diary）のみ、研究者が Backend URL を設定した場合に限り、**研究回答・自由記述・打鍵統計量・明示的に許可した文脈**だけを送信します（通常入力の本文は決して送りません）。Backend URL が未設定なら、お天気分のデータもすべて端末内のみに保存されます。本ドキュメントは保存する情報・保存場所・削除方法・保護方法を明示します。
+MacBook統合版では、キーボードが記録する入力イベント（確定本文・前後文脈を含む）、活動回答、端末ContextをTailscale経由でMacBookに同期します。SwitchBotの開閉記録と合わせてMacのSQLiteに保存します。初期接続先は `http://100.106.185.3:8000`。設定のBackend URLを空欄にすると通信を停止します。保存済みデータや送信待ちキューは残ります。操作手順は [macbook-lifelog.md](macbook-lifelog.md) を参照してください。
 
 ---
 
 ## 1. 基本方針
 
-- **通常入力は外部送信なし**: 変換・予測・学習・辞書はすべて端末内で完結します。通常の入力本文にネットワーク通信は一切行いません。
-- **研究機能は任意送信・既定オフ**: お天気分の送信は Backend URL を設定した場合のみ。既定は空（未設定）で、その場合は送信ゼロです。送信対象は研究回答・自由記述・打鍵統計量・許可済み文脈に限定し、**通常入力の本文は対象外**です（[narrative-integration.md](narrative-integration.md) 参照）。
-- **Full Access**: 通常入力のみを使う分には Full Access なしで動作します。お天気分の送信機能（Backend URL 設定時）を使う場合は、キーボード拡張からのネットワーク通信のため Full Access が必要です（[ios-keyboard-limitations.md](ios-keyboard-limitations.md) 参照）。
-- **トラッキングなし**: 解析 SDK・広告・トラッキング識別子を含みません（`PrivacyInfo.xcprivacy` の `NSPrivacyTracking = false`、収集データなし）。
+- かな漢字変換・辞書・学習処理は端末内で動作します。入力ログの保存・同期は別の経路です。
+- Full Access有効・プライベートモードOFF時、既存のSessionLoggerが入力イベントを記録します。Backend URLがある場合、本文を含む記録済みセッションをMacへ送信します。
+- 活動回答と文脈イベントは端末内に保存し、永続キューからMacへ再送します。MacではイベントIDで重複を防ぎます。
+- Macのサーバーは指定Tailscale IPにbindし、指定iPhoneとMac自身の接続元IPのみ許可します。広告・解析SDK・クラウドAIには送信しません。
+- 従来の疑似センサー受信は別のテスト機能です。今回のSwitchBot収集には不要です。
+- 既存のPrivacyInfo.xcprivacyは旧テンプレートです。この研究版をApp Storeへ公開する場合の申告は別途整合を確認する必要があります。
 
 ---
 
@@ -27,27 +29,48 @@ MozcFlickKeyboard の**通常のキーボード入力は完全に端末内で完
 
 ## 2.1 お天気分（研究）データ
 
-研究用機能「お天気分」は、質問への回答を研究データとして記録します。**通常の入力本文は含めません**。
+研究用機能「お天気分」は、質問への回答を研究データとして記録します。回答データと入力セッションは別の構造ですが、どちらもBackend URL設定時はMacへ同期します。
 
-| 情報 | 内容 | 送信対象か |
+| 情報 | 内容 | 送信の有無 |
 | --- | --- | --- |
-| `NarrativeEvent` | 質問への回答（選択肢の値・自由記述）、要約、感情/経験タイプ、文脈、打鍵統計量、PMTT ノード | Backend URL 設定時のみ送信 |
-| `ContextEvent` | 質問を伴わない文脈記録（起床・外出検知など） | Backend URL 設定時のみ送信 |
-| 打鍵統計量（`TypingFeatures`） | 打鍵速度・backspace 率・キー間隔・ポーズ等の**統計量のみ**（本文・キーの内容は保持しない） | 上記イベントに内包 |
+| `NarrativeEvent` | 質問への回答（選択肢の値・自由記述）、要約、感情/経験タイプ、文脈、打鍵統計量、PMTT ノード | 端末内保存 + Macへ同期 |
+| `ContextEvent` | 質問を伴わない文脈記録（起床・外出検知・疑似センサー受信など） | 端末内保存 + Macへ同期 |
+| 打鍵統計量（`TypingFeatures`） | 打鍵速度・backspace 率・キー間隔・ポーズ等の**統計量のみ**（本文・キーの内容は保持しない） | 上記イベント・セッションに内包してMacへ同期 |
 
 - 保存場所は App Group 共有コンテナ内の `Narrative/` 配下の日付別 JSONL:
   - `narrative_yyyyMMdd.jsonl` … 回答済み `NarrativeEvent`
   - `context_yyyyMMdd.jsonl` … `ContextEvent`
-  - `unsent_narrative.jsonl` … 送信失敗分の退避キュー（オフライン対応）
 - **自由記述の入力はホストアプリのテキスト欄（`textDocumentProxy`）へは一切挿入されません**。研究用の下書きバッファにのみ保持し、回答としてのみ保存します。
-- **通常のキーボード入力本文は Narrative の同期対象から完全に除外**されています（本文はローカルのセッションログが扱い、研究送信経路には流れません）。
-- Backend URL が空のあいだは送信は発生せず、上記ファイルは端末内のみに残ります。
+- `ResearchSessionUpload.events` には、既存のローカルセッションログに記録されるキー・かな・変換・確定文字列・入力欄の前後文脈が含まれます。Macへの送信対象です。
+- 親アプリの「お天気分」にあるJSON / CSV書き出しも引き続き利用できます。これは自動同期とは別の操作です。
+
+### 2.1.1 端末Context（HealthKit 活動量）
+
+- 親アプリ（`ResearchContextCollector`）が HealthKit から**読み取りのみ**で次の活動量を取得し、App Group（`ResearchDeviceContext`）へ最新値を保存し、入力セッションに付随してMacに送信します。カレンダーの予定タイトル・時刻、バッテリー状態も権限と取得状況に応じて含みます。キーボード拡張は HealthKit を直接読めないため、親アプリが集めた値を共有して使います。
+  - 今日0時〜現在の合計: 歩数 / 歩行距離 / 登った階段 / 活動エネルギー量推定値
+  - 直近1時間の平均: 歩行速度 / 歩幅 / 歩行非対称性
+- **バックグラウンド更新**: `HKObserverQuery` と `enableBackgroundDelivery(frequency: .hourly)` により、親アプリが前面でなくても約1時間ごとに最新値へ更新します（`com.apple.developer.healthkit.background-delivery`）。端末ロック中は HealthKit を読めないため、ロック解除後に反映されます。
+- **キーボードでの表示**: キーボード下部の「情報」ボタンから、保存済みの上記7項目を全画面の Info ページで表示します（開いた時点の保存値。開いている間は自動更新しません）。表示は App Group の読み取りのみで、ここから外部送信は行いません。
+
+---
+
+## 2.2 疑似センサー受信（研究用・既定オフ）
+
+実際の IoT センサーが無い段階でも研究フローを動かせるように、同一 Wi-Fi 上の PC から親アプリへ疑似センサーイベントを注入できます（`MozcFlickKeyboard/App/Sensor/SensorHTTPServer.swift`。CLI は `tools/sensor_inject.py`）。
+
+- **受け取る内容だけ**: `type`（`door_open` / `door_close` / `toilet` / `temperature` / `living_presence` など）、`value`（`high` / `mid` / `low`、`present` / `absent` など）、`at`（発生時刻）の3項目のみです。それ以外の情報は受け取りません。
+- 注入自体は「PC → 親アプリ」です。受信したイベントの文脈記録・センサー記録は、Backend URL設定時にMacへの送信対象になります。実機BLEの受信と疑似イベントは区別されます。
+- **親アプリ前面時のみ受信**: 受信サーバーは親アプリがアクティブなときだけ待ち受け、背面・バックグラウンドへ回ると停止します（iOS の制約）。キーボード拡張は受信に関与しません。
+- **既定は OFF**: 設定「研究設定（お天気分）」の「疑似センサー受信」を明示的に ON にしたときだけ動きます（`sensorReceiveEnabled` 既定 `false`、ポート既定 `8770`）。
+- **ローカルネットワーク許可が必要**: iOS 14 以降は初回にローカルネットワークアクセスの許可ダイアログが出ます（`NSLocalNetworkUsageDescription`）。拒否すると受信しません。
+- **通信範囲は LAN 内のみ**: 平文 HTTP ですが、同一 Wi-Fi 内の研究用注入だけを想定しています。インターネットへは出ません。受信したイベントは `ContextEvent`（`event_type = "sensor_<type>"` / `source = "sensor"`）として端末内 JSONL に保存されます。
+- アプリ内の疑似センサーボタンは直接 `SensorEventRouter` を呼びます。注入用HTTPは不要ですが、記録のMac同期はBackend URL設定に従います。
 
 ---
 
 ## 3. 保存場所（App Group）
 
-- すべて App Group `group.com.tanaka05.MozcFlickKeyboard` の共有領域に保存します。
+- iPhoneの共有データは App Group `group.com.tanaka05.MozcFlickKeyboard` に保存します。送信待ちは `Library/Application Support/PendingResearchSessions` と `ResearchOutbox`。Macの記録はサーバーディレクトリの `data/lifelog.sqlite3`。画面キャッシュは親アプリのCachesに保存します。
   - 設定: `UserDefaults(suiteName: AppConfig.appGroupID)`
   - ユーザー辞書 / 学習データ: App Group 共有コンテナ内のファイル（`AppConfig.sharedContainerURL`）
 - ホストアプリと Keyboard Extension が同じ領域を共有します。iCloud 同期・他アプリ共有は行いません。
@@ -56,15 +79,17 @@ MozcFlickKeyboard の**通常のキーボード入力は完全に端末内で完
 
 ## 4. プライベートモード
 
-- 設定でプライベートモードを有効にすると、**学習・変換履歴を保存しません**（辞書の明示的登録は除く）。
+- プライベートモードONでキーボードを開くと入力ロガーは開始しません。既に保存したログや送信待ちは削除しません。過去の送信待ちも含めて通信を停止したい場合はBackend URLを空欄にしてください。活動の手動回答・Mac側のSwitchBot受信は別の記録です。
 - 機微な入力を行う場面での利用を想定しています。
 
 ---
 
-## 5. 送信範囲の担保
+## 5. 送信経路
 
-- **通常入力の本文**: 変換・予測・学習・辞書はローカル完結で、通常入力の本文を送出する経路を持ちません。依存する Mozc もローカル変換用途で組み込み、通信機能は使用しません。
-- **お天気分の送信**: Backend URL 設定時のみ、`RemoteRepository` が研究回答（`NarrativeEvent`）・文脈（`ContextEvent`）を送信します。送信内容に通常入力の本文は含まれず、打鍵情報は統計量のみです。送信は失敗しても端末動作をブロックせず、失敗分は退避キューに残して後で再送します。
+- `ResearchAPIClient` が入力セッションを `/api/sessions` へ送ります。
+- `NarrativeRepositoryHub` が回答と文脈をローカル保存し、`ResearchEventOutbox` を通してMacへ送ります。失敗したイベントは次回同期時に再送します。
+- `LifeLogAPI` が状態・日別ログ・詳細を取得します。設置場所の名前もMacに保存します。
+- 古いデータや受信が途絶えたデータを現在の確定情報として扱いません。活動回答と推定を区別し、開閉だけで人の所在を断定しません。
 
 ---
 
@@ -73,7 +98,7 @@ MozcFlickKeyboard の**通常のキーボード入力は完全に端末内で完
 - **ユーザー辞書の個別削除**: ホストアプリの辞書管理画面から項目単位で削除。
 - **辞書・学習の全消去**: ホストアプリの「データを消去」操作（全エントリ削除・学習リセット）。
 - **アプリ削除**: iPhone からアプリを削除すると、App Group 共有コンテナのデータも OS により削除されます。
-- 設定のリセットも同様にホストアプリから可能です。
+- iPhone側の削除ではMacのDBは消えません。Macの記録を削除する場合はサーバー停止後、必要なバックアップを取って `data/` を管理してください。自動削除期限は設定していません。
 
 ---
 

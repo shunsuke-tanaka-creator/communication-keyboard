@@ -57,7 +57,7 @@ final class FlickKeyButton: UIControl {
         l.textAlignment = .center
         l.font = UIFont.preferredFont(forTextStyle: .title2)
         l.adjustsFontForContentSizeCategory = true // Dynamic Type
-        l.textColor = .label
+        l.textColor = KeyboardAppearance.ink
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
     }()
@@ -67,9 +67,12 @@ final class FlickKeyButton: UIControl {
         let l = UILabel()
         l.textAlignment = .center
         l.font = UIFont.systemFont(ofSize: 28, weight: .medium)
-        l.textColor = .label
-        l.backgroundColor = .secondarySystemBackground
-        l.layer.cornerRadius = 8
+        l.textColor = .white
+        l.backgroundColor = KeyboardAppearance.accentFill
+        l.layer.cornerRadius = 12
+        l.layer.cornerCurve = .continuous
+        l.adjustsFontSizeToFitWidth = true
+        l.minimumScaleFactor = 0.5
         l.layer.masksToBounds = true
         l.isHidden = true
         l.translatesAutoresizingMaskIntoConstraints = false
@@ -78,6 +81,41 @@ final class FlickKeyButton: UIControl {
 
     /// フリックガイド（上下左右の候補を薄く表示するコンテナ）。
     private let guideView = FlickGuideView()
+    private let symbolView = UIImageView()
+    private var touchIsActive = false
+
+    private var isCharacterKey: Bool {
+        switch keyDefinition.action {
+        case .kana, .input: return true
+        default: return false
+        }
+    }
+
+    private var isPrimaryKey: Bool {
+        if case .returnOrConfirm = keyDefinition.action { return keyDefinition.row == 2 }
+        return false
+    }
+
+    private func updateAppearance() {
+        backgroundColor = touchIsActive ? KeyboardAppearance.accentSoft
+            : (isPrimaryKey ? KeyboardAppearance.accentFill
+                : (isCharacterKey ? KeyboardAppearance.key : KeyboardAppearance.utilityKey))
+        let foreground: UIColor = isPrimaryKey && !touchIsActive ? .white : KeyboardAppearance.ink
+        titleLabel.textColor = foreground
+        symbolView.tintColor = foreground
+        layer.borderColor = KeyboardAppearance.border.resolvedColor(with: traitCollection).cgColor
+        layer.shadowOpacity = touchIsActive ? 0 : (traitCollection.userInterfaceStyle == .dark ? 0.22 : 0.10)
+    }
+
+    override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
+        super.traitCollectionDidChange(previousTraitCollection)
+        updateAppearance()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layer.shadowPath = UIBezierPath(roundedRect: bounds, cornerRadius: layer.cornerRadius).cgPath
+    }
 
     // MARK: - init
 
@@ -92,18 +130,45 @@ final class FlickKeyButton: UIControl {
     }
 
     private func setup() {
-        backgroundColor = .tertiarySystemBackground
-        layer.cornerRadius = 6
+        layer.cornerRadius = 10
+        layer.cornerCurve = .continuous
+        layer.borderWidth = 0.5
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOffset = CGSize(width: 0, height: 1)
+        layer.shadowRadius = 1.5
         layer.masksToBounds = false
 
         addSubview(guideView)
         addSubview(titleLabel)
         addSubview(popupLabel)
+        symbolView.contentMode = .scaleAspectFit
+        symbolView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)
+        symbolView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(symbolView)
         guideView.translatesAutoresizingMaskIntoConstraints = false
 
         titleLabel.text = keyDefinition.label
+        let size: CGFloat = isCharacterKey && keyDefinition.label.count == 1 ? 23 : 14
+        titleLabel.font = UIFontMetrics(forTextStyle: .body).scaledFont(
+            for: .systemFont(ofSize: size, weight: isCharacterKey ? .regular : .medium),
+            maximumPointSize: size + 5)
+        titleLabel.adjustsFontSizeToFitWidth = true
+        titleLabel.minimumScaleFactor = 0.65
+        switch keyDefinition.action {
+        case .backspace: symbolView.image = UIImage(systemName: "delete.left")
+        case .nextKeyboard: symbolView.image = UIImage(systemName: "globe")
+        default: break
+        }
+        titleLabel.isHidden = symbolView.image != nil
+        updateAppearance()
 
         NSLayoutConstraint.activate([
+            symbolView.centerXAnchor.constraint(equalTo: centerXAnchor),
+            symbolView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            symbolView.widthAnchor.constraint(equalToConstant: 24),
+            symbolView.heightAnchor.constraint(equalToConstant: 24),
+            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 4),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -4),
             titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             guideView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -112,8 +177,8 @@ final class FlickKeyButton: UIControl {
             guideView.bottomAnchor.constraint(equalTo: bottomAnchor),
             popupLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             popupLabel.bottomAnchor.constraint(equalTo: topAnchor, constant: -4),
-            popupLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 44),
-            popupLabel.heightAnchor.constraint(equalToConstant: 44),
+            popupLabel.widthAnchor.constraint(equalTo: widthAnchor),
+            popupLabel.heightAnchor.constraint(equalToConstant: 48),
         ])
 
         // かなキーならフリックガイドに方向文字を設定。
@@ -128,6 +193,11 @@ final class FlickKeyButton: UIControl {
     // MARK: - タッチ処理
 
     override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+        touchIsActive = true
+        updateAppearance()
+        // ガイドとポップアップを隣接キーより前に描画する（タッチ領域は変えない）。
+        layer.zPosition = 10
+        superview?.layer.zPosition = 10
         startPoint = touch.location(in: self)
         currentDirection = .center
         showPopup(for: .center)
@@ -159,6 +229,10 @@ final class FlickKeyButton: UIControl {
     }
 
     private func finishTouch(activate: Bool) {
+        touchIsActive = false
+        updateAppearance()
+        layer.zPosition = 0
+        superview?.layer.zPosition = 0
         hidePopup()
         guideView.setActive(false)
         stopRepeat()
@@ -243,7 +317,7 @@ final class FlickGuideView: UIView {
             let l = UILabel()
             l.textAlignment = .center
             l.font = UIFont.systemFont(ofSize: 12)
-            l.textColor = .tertiaryLabel
+            l.textColor = KeyboardAppearance.secondaryInk
             l.translatesAutoresizingMaskIntoConstraints = false
             l.isHidden = true
             addSubview(l)
@@ -291,13 +365,15 @@ final class FlickGuideView: UIView {
     /// 現在の方向を強調。
     func highlight(_ direction: FlickDirection) {
         for (dir, l) in directionLabels {
-            l.textColor = (dir == direction) ? .label : .tertiaryLabel
+            l.textColor = (dir == direction) ? KeyboardAppearance.accent : KeyboardAppearance.secondaryInk
+            l.font = .systemFont(ofSize: 12, weight: dir == direction ? .bold : .regular)
         }
     }
 
     private func resetHighlight() {
         for (_, l) in directionLabels {
-            l.textColor = .tertiaryLabel
+            l.textColor = KeyboardAppearance.secondaryInk
+            l.font = .systemFont(ofSize: 12)
         }
     }
 }

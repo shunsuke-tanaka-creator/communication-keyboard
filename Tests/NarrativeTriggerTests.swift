@@ -237,4 +237,172 @@ final class NarrativeTriggerTests: XCTestCase {
             XCTAssertFalse(child.value is [String], "TypingFeatures が文字列配列を持ってはいけない: \(child.label ?? "?")")
         }
     }
+
+    // MARK: - 追加: 疑似センサー（SensorEventRouter / SensorPendingTrigger）
+    //
+    // 【方針】
+    //  - SensorEventRouter は NarrativeStore 経由で ContextEvent を App Group へ書くが、
+    //    テスト環境では App Group コンテナが無いため NarrativeStore の IO は黙って no-op になる。
+    //    したがって検証は「戻り値 SensorRouteResult」と「注入した UserDefaults suite 上の NarrativeState」だけに限る。
+    //    NarrativeStore が書いたファイルは一切検証しない。
+
+    /// 追加: 使い捨て state を使った Router を作る（store は既定の NarrativeStore = テストでは no-op）。
+    private func makeRouter() -> SensorEventRouter {
+        SensorEventRouter(state: state, store: NarrativeStore())
+    }
+
+    // MARK: - 12. 追加: 玄関開 → 外出が手動イベントキューへ積まれる
+
+    func testSensorDoorOpenEnqueuesOuting() {
+        let now = date(hour: 13)
+        let result = makeRouter().route(SensorEvent(type: SensorEventRouter.typeDoorOpen, at: now))
+        XCTAssertEqual(result.manualEvent, .outing, "door_open は外出として扱うべき")
+        XCTAssertNil(result.pendingKind, "door_open は保留質問キューを使わない")
+        XCTAssertEqual(result.contextEventType, "sensor_door_open")
+        XCTAssertFalse(result.isUnknownType)
+        // 追加: 実際に手動イベントキューへ積まれていること。
+        XCTAssertTrue(state.peekManualEvents().contains { $0.0 == .outing }, "手動イベントキューに outing が入るべき")
+    }
+
+    // MARK: - 13. 追加: 玄関閉 → 帰宅が手動イベントキューへ積まれる
+
+    func testSensorDoorCloseEnqueuesReturnHome() {
+        let now = date(hour: 18)
+        let result = makeRouter().route(SensorEvent(type: SensorEventRouter.typeDoorClose, at: now))
+        XCTAssertEqual(result.manualEvent, .returnHome, "door_close は帰宅として扱うべき")
+        XCTAssertNil(result.pendingKind)
+        XCTAssertEqual(result.contextEventType, "sensor_door_close")
+        XCTAssertTrue(state.peekManualEvents().contains { $0.0 == .returnHome }, "手動イベントキューに return_home が入るべき")
+    }
+
+    // MARK: - 14. 追加: 温度 high / low → fatigueCheck が保留質問キューへ積まれる
+
+    func testSensorTemperatureHighEnqueuesFatigueCheck() {
+        let router = makeRouter()
+        let now = date(hour: 14)
+
+        // 高温: 疲労チェックを積む。
+        let high = router.route(SensorEvent(type: SensorEventRouter.typeTemperature, value: "high", at: now))
+        XCTAssertEqual(high.pendingKind, .fatigueCheck, "温度 high は fatigueCheck を出すべき")
+        XCTAssertNil(high.manualEvent, "温度は手動イベントキューを使わない")
+        XCTAssertEqual(high.contextEventType, "sensor_temperature")
+        XCTAssertEqual(state.peekPendingKinds().first?.0, .fatigueCheck, "保留質問キューの先頭は fatigueCheck であるべき")
+
+        // 追加: 低温も同じ扱い（キューを空にしてから再確認する）。
+        state.resetForTesting()
+        let low = router.route(SensorEvent(type: SensorEventRouter.typeTemperature, value: "low", at: now))
+        XCTAssertEqual(low.pendingKind, .fatigueCheck, "温度 low も fatigueCheck を出すべき")
+        XCTAssertNil(low.manualEvent)
+        XCTAssertEqual(state.peekPendingKinds().first?.0, .fatigueCheck)
+    }
+
+    // MARK: - 15. 追加: 温度 mid → 質問は出さず記録のみ
+
+    func testSensorTemperatureMidRecordsContextOnly() {
+        let now = date(hour: 14)
+        let result = makeRouter().route(SensorEvent(type: SensorEventRouter.typeTemperature, value: "mid", at: now))
+        XCTAssertNil(result.manualEvent, "温度 mid は手動イベントを積まない")
+        XCTAssertNil(result.pendingKind, "温度 mid は保留質問を積まない")
+        XCTAssertFalse(result.isUnknownType, "temperature は既知の type であるべき")
+        XCTAssertTrue(state.peekPendingKinds().isEmpty, "温度 mid で保留質問キューが空のままであるべき")
+        XCTAssertTrue(state.peekManualEvents().isEmpty, "温度 mid で手動イベントキューが空のままであるべき")
+        // 追加: 記録だけは必ず行う（event_type は sensor_<type>）。
+        XCTAssertEqual(result.contextEventType, "sensor_temperature")
+    }
+
+    // MARK: - 16. 追加: トイレ → 質問は出さず記録のみ
+
+    func testSensorToiletRecordsContextOnly() {
+        let now = date(hour: 15)
+        let result = makeRouter().route(SensorEvent(type: SensorEventRouter.typeToilet, at: now))
+        XCTAssertNil(result.manualEvent)
+        XCTAssertNil(result.pendingKind)
+        XCTAssertFalse(result.isUnknownType)
+        XCTAssertEqual(result.contextEventType, "sensor_toilet")
+        XCTAssertTrue(state.peekPendingKinds().isEmpty)
+        XCTAssertTrue(state.peekManualEvents().isEmpty)
+    }
+
+    // MARK: - 17. 追加: 在室（present/absent）→ 質問は出さず記録のみ
+
+    func testSensorLivingPresenceRecordsContextOnly() {
+        let now = date(hour: 16)
+        // 追加: 在室あり。
+        let result = makeRouter().route(SensorEvent(type: SensorEventRouter.typeLivingPresence, value: "present", at: now))
+        XCTAssertNil(result.manualEvent)
+        XCTAssertNil(result.pendingKind)
+        XCTAssertFalse(result.isUnknownType)
+        XCTAssertEqual(result.contextEventType, "sensor_living_presence")
+        XCTAssertTrue(state.peekPendingKinds().isEmpty)
+        XCTAssertTrue(state.peekManualEvents().isEmpty)
+
+        // 追加: 不在も同じく記録のみ（質問を出さない）。
+        let absent = makeRouter().route(SensorEvent(type: SensorEventRouter.typeLivingPresence, value: "absent", at: now))
+        XCTAssertNil(absent.manualEvent)
+        XCTAssertNil(absent.pendingKind)
+        XCTAssertEqual(absent.contextEventType, "sensor_living_presence")
+        XCTAssertTrue(state.peekPendingKinds().isEmpty)
+        XCTAssertTrue(state.peekManualEvents().isEmpty)
+    }
+
+    // MARK: - 18. 追加: 未知の type はフラグを立てつつ記録は行う
+
+    func testSensorUnknownTypeFlagged() {
+        let now = date(hour: 12)
+        let result = makeRouter().route(SensorEvent(type: "foobar", at: now))
+        XCTAssertTrue(result.isUnknownType, "未知の type は isUnknownType=true で返すべき（CLI の綴り間違い検知）")
+        XCTAssertNil(result.manualEvent)
+        XCTAssertNil(result.pendingKind)
+        XCTAssertTrue(state.peekPendingKinds().isEmpty)
+        XCTAssertTrue(state.peekManualEvents().isEmpty)
+        // 追加: 未知でも研究ログを欠損させないため記録は行う。
+        XCTAssertEqual(result.contextEventType, "sensor_foobar")
+    }
+
+    // MARK: - 19. 追加: 最後の受信内容が Dashboard 表示用に保存される
+
+    func testSensorUpdatesLastEventInfo() {
+        let now = date(hour: 14)
+        makeRouter().route(SensorEvent(type: SensorEventRouter.typeTemperature, value: "high", at: now))
+        XCTAssertTrue(state.lastSensorEvent.contains("temperature=high"),
+                      "lastSensorEvent に type=value が残るべき: \(state.lastSensorEvent)")
+        XCTAssertNotNil(state.lastSensorEventAt, "受信時刻が記録されるべき")
+    }
+
+    // MARK: - 20. 追加: 保留質問キューは SensorPendingTrigger から出題される
+
+    func testSensorPendingTriggerProducesQueuedQuestion() {
+        let engine = makeEngine()
+        let now = date(hour: 13) // 昼: 朝/夜トリガーは発火しない。
+        state.enqueuePendingKind(.fatigueCheck, at: now)
+        let q = engine.nextQuestion(now: now, isFirstKeyboardUseToday: false, typing: nil)
+        XCTAssertEqual(q?.kind, .fatigueCheck, "保留質問キューの種別をそのまま出題すべき")
+        XCTAssertEqual(q?.eventType, "sensor_pending", "センサー由来の event_type は sensor_pending であるべき")
+    }
+
+    // MARK: - 21. 追加: センサー保留は手動イベントより優先される
+
+    func testSensorPendingTriggerHasPriorityOverManual() {
+        let engine = makeEngine()
+        let now = date(hour: 13)
+        // 手動「外出した」とセンサー由来の疲労チェックを両方積む。
+        state.enqueueManualEvent(.outing, at: now)
+        state.enqueuePendingKind(.fatigueCheck, at: now)
+        let q = engine.nextQuestion(now: now, isFirstKeyboardUseToday: false, typing: nil)
+        XCTAssertEqual(q?.kind, .fatigueCheck, "センサー保留が最優先（手動 outing より先）であるべき")
+    }
+
+    // MARK: - 22. 追加: dequeuePendingKinds はキューを空にする
+
+    func testDequeuePendingKindsClearsQueue() {
+        let now = date(hour: 13)
+        state.enqueuePendingKind(.fatigueCheck, at: now)
+        state.enqueuePendingKind(.breakCheck, at: now)
+        XCTAssertEqual(state.peekPendingKinds().count, 2, "peek は消費しないので2件見えるべき")
+
+        let dequeued = state.dequeuePendingKinds()
+        XCTAssertEqual(dequeued.count, 2, "dequeue は積んだ2件を返すべき")
+        XCTAssertEqual(dequeued.first?.0, .fatigueCheck, "順序（古い順）が保たれるべき")
+        XCTAssertTrue(state.peekPendingKinds().isEmpty, "dequeue 後はキューが空であるべき")
+    }
 }

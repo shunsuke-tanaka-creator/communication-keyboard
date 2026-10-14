@@ -14,6 +14,54 @@
 import UIKit
 import MozcFlickShared // 追加: 共有フレームワークの型を利用
 
+/// キーボード拡張内の表示専用パレット。入力ロジックから独立させる。
+enum KeyboardAppearance {
+    private static func adaptive(_ light: UInt32, _ dark: UInt32) -> UIColor {
+        UIColor { traits in
+            let value = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: CGFloat((value >> 16) & 0xff) / 255,
+                           green: CGFloat((value >> 8) & 0xff) / 255,
+                           blue: CGFloat(value & 0xff) / 255, alpha: 1)
+        }
+    }
+
+    static let canvas = adaptive(0xE9EEF0, 0x151D23)
+    static let surface = adaptive(0xF3F6F7, 0x1D282F)
+    static let key = adaptive(0xFFFFFF, 0x303D46)
+    static let utilityKey = adaptive(0xDCE5E8, 0x233139)
+    static let ink = adaptive(0x243B45, 0xEDF4F6)
+    static let secondaryInk = adaptive(0x526B76, 0xB0C3CD)
+    static let accent = adaptive(0x176D73, 0x91D7D3)
+    static let accentFill = adaptive(0x176D73, 0x286D73)
+    static let accentSoft = adaptive(0xD0E8E6, 0x34585D)
+    static let border = adaptive(0xCDDADE, 0x455660)
+
+    static func styleButton(_ button: UIButton, title: String, symbol: String? = nil,
+                            prominent: Bool = false, compact: Bool = false) {
+        var config = UIButton.Configuration.plain()
+        config.title = title
+        config.image = symbol.flatMap { UIImage(systemName: $0) }
+        config.imagePadding = compact ? 4 : 10
+        config.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(
+            pointSize: compact ? 12 : 18, weight: .medium)
+        config.baseForegroundColor = prominent ? .white : accent
+        config.background.backgroundColor = prominent ? accentFill : (compact ? accentSoft : key)
+        config.background.cornerRadius = compact ? 9 : 13
+        config.cornerStyle = .fixed
+        config.contentInsets = NSDirectionalEdgeInsets(top: compact ? 6 : 12,
+                                                       leading: compact ? 8 : 16,
+                                                       bottom: compact ? 6 : 12,
+                                                       trailing: compact ? 8 : 16)
+        config.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
+            var attributes = attributes
+            attributes.font = UIFont.systemFont(ofSize: compact ? 12 : 17, weight: .semibold)
+            return attributes
+        }
+        button.configuration = config
+        button.layer.cornerCurve = .continuous
+    }
+}
+
 final class KeyboardView: UIView {
 
     /// 入力イベントの通知先。KeyboardViewController が実装する。
@@ -59,7 +107,7 @@ final class KeyboardView: UIView {
     private let infoLabel: UILabel = {
         let l = UILabel()
         l.font = .systemFont(ofSize: 13, weight: .medium)
-        l.textColor = .secondaryLabel
+        l.textColor = KeyboardAppearance.secondaryInk
         l.textAlignment = .center
         l.text = ""
         return l
@@ -84,9 +132,18 @@ final class KeyboardView: UIView {
         return b
     }()
 
+    /// 追加: 情報ボタン。押下で onInfoTap を呼び、バナーに活動量サマリー（HealthKit）を展開する。
+    private let infoButton: UIButton = {
+        let b = UIButton(type: .system)
+        b.setTitle("情報", for: .normal)
+        b.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
+        b.setContentHuggingPriority(.required, for: .horizontal)
+        return b
+    }()
+
     /// 追加: 最下層に表示する情報バー（文言ラベル + 記録ボタン + チェックボタン）。入力欄には書かず表示のみ。
     private lazy var infoBar: UIStackView = {
-        let s = UIStackView(arrangedSubviews: [infoLabel, recordButton, checkButton])
+        let s = UIStackView(arrangedSubviews: [infoLabel, recordButton, infoButton, checkButton])
         s.axis = .horizontal
         s.spacing = 8
         s.alignment = .center
@@ -99,6 +156,9 @@ final class KeyboardView: UIView {
 
     /// 追加:「記録」ボタン押下時のコールバック。KeyboardViewController が手動イベントバナーを開く。
     var onRecordTap: (() -> Void)?
+
+    /// 追加:「情報」ボタン押下時のコールバック。KeyboardViewController が Info ページを開く。
+    var onInfoTap: (() -> Void)?
 
     // 追加: バナーのコールバックをそのまま controller へ中継する透過プロパティ群。
     //       KeyboardView は proxy を持たないため、これらは決して入力欄へ繋がらない。
@@ -114,6 +174,8 @@ final class KeyboardView: UIView {
     var onFreeTextCancel: (() -> Void)?
     /// 追加: 手動イベント選択の中継。
     var onManualEvent: ((ManualEvent) -> Void)?
+    /// 追加: Info ページ「閉じる」の中継。
+    var onInfoClose: (() -> Void)?
 
     /// キー全体を縦に積む親スタック。
     private let rootStack: UIStackView = {
@@ -139,7 +201,11 @@ final class KeyboardView: UIView {
 
     private func setup() {
         translatesAutoresizingMaskIntoConstraints = false
-        backgroundColor = .clear
+        backgroundColor = KeyboardAppearance.canvas
+        tintColor = KeyboardAppearance.accent
+        KeyboardAppearance.styleButton(recordButton, title: "記録", symbol: "square.and.pencil", compact: true)
+        KeyboardAppearance.styleButton(infoButton, title: "情報", symbol: "info.circle", compact: true)
+        KeyboardAppearance.styleButton(checkButton, title: "チェック", prominent: true, compact: true)
 
         candidateBar.translatesAutoresizingMaskIntoConstraints = false
         candidateList.translatesAutoresizingMaskIntoConstraints = false
@@ -157,6 +223,7 @@ final class KeyboardView: UIView {
 
         checkButton.addTarget(self, action: #selector(checkButtonTapped), for: .touchUpInside) // 追加
         recordButton.addTarget(self, action: #selector(recordButtonTapped), for: .touchUpInside) // 追加:「記録」ボタン配線
+        infoButton.addTarget(self, action: #selector(infoButtonTapped), for: .touchUpInside) // 追加:「情報」ボタン配線
 
         // 追加: バナーのコールバックを透過プロパティへ中継する（proxy へは一切繋がない）。
         questionBanner.onSelectOption = { [weak self] option in self?.onQuestionOption?(option) }
@@ -165,6 +232,7 @@ final class KeyboardView: UIView {
         questionBanner.onFreeTextCommit = { [weak self] in self?.onFreeTextCommit?() }
         questionBanner.onFreeTextCancel = { [weak self] in self?.onFreeTextCancel?() }
         questionBanner.onManualEvent = { [weak self] event in self?.onManualEvent?(event) }
+        questionBanner.onInfoClose = { [weak self] in self?.onInfoClose?() } // 追加: Info ページ「閉じる」中継
 
         candidateBar.onSelect = { [weak self] candidate in
             self?.actionDelegate?.keyboardDidSelectCandidate(id: candidate.id)
@@ -206,14 +274,14 @@ final class KeyboardView: UIView {
             candidateList.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             rootStack.topAnchor.constraint(equalTo: candidateBar.bottomAnchor, constant: 6),
-            rootStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 3),
-            rootStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -3),
+            rootStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
+            rootStack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
             // 変更: rootStack の下端を親からではなく infoBar の上に付け替える。
             rootStack.bottomAnchor.constraint(equalTo: infoBar.topAnchor, constant: -3),
 
             // 追加: 情報バーを最下層に固定（高さ 36pt。チェックボタンを収めるため拡大）。
-            infoBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 3),
-            infoBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -3),
+            infoBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            infoBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             infoBar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
             infoBar.heightAnchor.constraint(equalToConstant: 36),
         ])
@@ -269,13 +337,13 @@ final class KeyboardView: UIView {
     /// 追加: 安否確認のチェック表示にする（質問文 + チェックボタン表示）。
     func setCheckPrompt(_ text: String) {
         infoLabel.text = text
-        infoLabel.textColor = .label
+        infoLabel.textColor = KeyboardAppearance.ink
         checkButton.isHidden = false
     }
 
     /// 追加: 安否確認のチェック表示を解除する（通常の情報表示へ戻す）。
     func clearCheckPrompt() {
-        infoLabel.textColor = .secondaryLabel
+        infoLabel.textColor = KeyboardAppearance.secondaryInk
         checkButton.isHidden = true
     }
 
@@ -289,12 +357,23 @@ final class KeyboardView: UIView {
         onRecordTap?()
     }
 
+    /// 追加:「情報」ボタン押下。Info ページを開く指示を controller へ送る。
+    @objc private func infoButtonTapped() {
+        onInfoTap?()
+    }
+
     // MARK: - 公開 API（お天気分バナー）
 
     /// 変更: 質問をバナーに表示する。フル画面モードでキーボード全体を占有する（キー・候補バーを隠す）。
     func showQuestion(_ pending: PendingQuestion) {
         questionBanner.showQuestion(pending) // 追加: 内容を構築
         setNarrativeFullScreen(true) // 追加: キー領域・候補バーを隠してバナーが全面を使う
+    }
+
+    /// 追加: 表示中の質問の選択肢画面を切り替える（活動の大分類→詳細、夜の5尺度を順に出す）。
+    func showQuestionOptions(prompt: String, options: [QuestionOption], allowFreeText: Bool, showSnooze: Bool = true) {
+        questionBanner.showOptions(prompt: prompt, options: options, allowFreeText: allowFreeText, showSnooze: showSnooze) // 追加: 内容差し替え
+        setNarrativeFullScreen(true) // 追加: 自由入力から戻った場合もフル画面にする
     }
 
     /// 変更: バナーを閉じる（フル画面解除 + 内容消去）。通常のキーボードへ戻る。
@@ -307,6 +386,12 @@ final class KeyboardView: UIView {
     func showManualEventPicker() {
         questionBanner.showManualEvents() // 追加: 手動イベントボタン構築
         setNarrativeFullScreen(true) // 追加: フル画面で大きなボタンを見せる
+    }
+
+    /// 追加: Info ページ（HealthKit 活動量サマリー）をバナーに表示する。フル画面で表示。
+    func showInfo(text: String) {
+        questionBanner.showInfo(text: text) // 追加: 活動量サマリー構築
+        setNarrativeFullScreen(true) // 追加: フル画面で全項目を見せる
     }
 
     /// 追加: 「お天気分」フル画面モードの ON/OFF。

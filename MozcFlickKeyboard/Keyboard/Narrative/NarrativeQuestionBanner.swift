@@ -29,6 +29,8 @@ final class NarrativeQuestionBanner: UIView {
     var onFreeTextCancel: (() -> Void)?
     /// 追加: 手動イベントボタンがタップされた。
     var onManualEvent: ((ManualEvent) -> Void)?
+    /// 追加: Info ページの「閉じる」がタップされた。
+    var onInfoClose: (() -> Void)?
 
     // MARK: - 内部状態
 
@@ -41,7 +43,7 @@ final class NarrativeQuestionBanner: UIView {
     private let headerIcon: UIImageView = {
         let v = UIImageView()
         v.contentMode = .scaleAspectFit
-        v.tintColor = .systemYellow // 追加: 天気マークらしい色
+        v.tintColor = KeyboardAppearance.accent
         v.setContentHuggingPriority(.required, for: .horizontal)
         return v
     }()
@@ -50,7 +52,7 @@ final class NarrativeQuestionBanner: UIView {
     private let promptLabel: UILabel = {
         let l = UILabel()
         l.font = .systemFont(ofSize: 18, weight: .semibold) // 変更: 12 → 18pt（フル画面用）
-        l.textColor = .label
+        l.textColor = KeyboardAppearance.ink
         l.numberOfLines = 2
         return l
     }()
@@ -59,7 +61,7 @@ final class NarrativeQuestionBanner: UIView {
     private lazy var headerStack: UIStackView = {
         let s = UIStackView(arrangedSubviews: [headerIcon, promptLabel])
         s.axis = .horizontal
-        s.spacing = 4
+        s.spacing = 10
         s.alignment = .center
         return s
     }()
@@ -76,7 +78,7 @@ final class NarrativeQuestionBanner: UIView {
     private let optionsStack: UIStackView = {
         let s = UIStackView()
         s.axis = .vertical // 変更: horizontal → vertical（フル画面で大きなボタンを縦に並べる）
-        s.spacing = 8 // 変更: 6 → 8（押しやすい間隔）
+        s.spacing = 6 // コンパクトな画面でも選択肢の余白を揃える
         s.alignment = .fill // 変更: center → fill（ボタンを横幅いっぱいに広げる）
         return s
     }()
@@ -87,7 +89,7 @@ final class NarrativeQuestionBanner: UIView {
     private let draftLabel: UILabel = {
         let l = UILabel()
         l.font = .systemFont(ofSize: 17, weight: .regular) // 変更: 12 → 17pt
-        l.textColor = .label
+        l.textColor = KeyboardAppearance.ink
         l.numberOfLines = 1
         l.text = ""
         return l
@@ -130,8 +132,18 @@ final class NarrativeQuestionBanner: UIView {
     /// 追加: サブビューと制約を構築する。
     private func setup() {
         translatesAutoresizingMaskIntoConstraints = false // 追加: AutoLayout 管理
-        backgroundColor = .secondarySystemBackground // 追加: 候補バーと区別できる薄い背景
-        layer.cornerRadius = 10 // 追加: フル画面表示時に「質問カード」として見えるよう角丸にする
+        backgroundColor = KeyboardAppearance.surface
+        tintColor = KeyboardAppearance.accent
+        layer.cornerRadius = 16
+        layer.cornerCurve = .continuous
+        KeyboardAppearance.styleButton(commitButton, title: "決定", prominent: true, compact: true)
+        KeyboardAppearance.styleButton(cancelButton, title: "キャンセル", compact: true)
+        draftLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        draftLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        for button in [commitButton, cancelButton] {
+            button.setContentHuggingPriority(.required, for: .horizontal)
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
 
         // 追加: 見出し（天気アイコン + 質問文）を配置。
         headerStack.translatesAutoresizingMaskIntoConstraints = false
@@ -140,8 +152,8 @@ final class NarrativeQuestionBanner: UIView {
         // 追加: 見出しアイコンのサイズを固定（フル画面表示なので大きめの天気マーク）。
         headerIcon.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            headerIcon.widthAnchor.constraint(equalToConstant: 34), // 変更: 14 → 34pt
-            headerIcon.heightAnchor.constraint(equalToConstant: 34), // 変更: 14 → 34pt
+            headerIcon.widthAnchor.constraint(equalToConstant: 28),
+            headerIcon.heightAnchor.constraint(equalToConstant: 28),
         ])
 
         // 追加: 選択肢 ScrollView と内部 Stack を配置。
@@ -196,6 +208,13 @@ final class NarrativeQuestionBanner: UIView {
         rebuildOptionButtons(options: pending.options, allowFreeText: pending.allowFreeText, showSnooze: true, manual: false) // 追加: 選択肢を再構築
     }
 
+    /// 追加: 同じ質問のまま、質問文と選択肢だけを差し替える（活動2段階・夜5尺度の画面切り替え用）。
+    func showOptions(prompt: String, options: [QuestionOption], allowFreeText: Bool, showSnooze: Bool) {
+        setFreeTextMode(false) // 追加: 選択肢モードで表示
+        promptLabel.text = prompt // 追加: 段階ごとの質問文
+        rebuildOptionButtons(options: options, allowFreeText: allowFreeText, showSnooze: showSnooze, manual: false) // 追加: 選択肢を再構築
+    }
+
     /// 追加: 手動イベント4ボタンを表示する（infoBar「記録」から）。
     func showManualEvents() {
         currentPending = nil // 追加: 質問ではないので保持なし
@@ -203,6 +222,19 @@ final class NarrativeQuestionBanner: UIView {
         promptLabel.text = "記録する行動を選んでください" // 追加: 手動イベントの見出し
         headerIcon.image = UIImage(systemName: "square.and.pencil") // 追加: 手動記録は記録アイコン
         rebuildManualButtons() // 追加: ManualEvent ボタンを構築
+    }
+
+    /// 追加: Info ページ（HealthKit の活動量サマリー）を表示する。閉じるボタンだけ出す。
+    func showInfo(text: String) {
+        currentPending = nil // 追加: 質問ではないので保持なし
+        setFreeTextMode(false) // 追加: 選択肢モード表示
+        promptLabel.numberOfLines = 0 // 追加: 複数行の活動サマリーを全部出す
+        promptLabel.text = text // 追加: 7項目の文字列
+        headerIcon.image = UIImage(systemName: "figure.walk") // 追加: 活動量アイコン
+        clearOptionButtons() // 追加: 既存ボタンを撤去
+        let close = makeButton(title: "閉じる", iconName: "xmark") // 追加: 閉じるボタンだけ
+        close.addAction(UIAction { [weak self] _ in self?.onInfoClose?() }, for: .touchUpInside)
+        optionsStack.addArrangedSubview(close)
     }
 
     /// 追加: 自由記述モードの ON/OFF を切り替える（選択肢 UI と自由記述 UI の表示を入れ替える）。
@@ -221,6 +253,7 @@ final class NarrativeQuestionBanner: UIView {
     func clear() {
         currentPending = nil // 追加: 保持解除
         promptLabel.text = "" // 追加: 文言消去
+        promptLabel.numberOfLines = 2 // 追加: Info で 0 にした行数を質問用（2行）へ戻す
         headerIcon.image = nil // 追加: 見出しの天気マークも消す
         draftLabel.text = "" // 追加: 下書き消去
         setFreeTextMode(false) // 追加: 選択肢モードへ戻す
@@ -281,23 +314,9 @@ final class NarrativeQuestionBanner: UIView {
     /// 変更: 共通のボタン外観を作るヘルパ。フル画面表示なので大きく・アイコンも大きくする。
     private func makeButton(title: String, iconName: String? = nil) -> UIButton {
         let b = UIButton(type: .system) // 追加: system ボタン
-        b.setTitle(title, for: .normal)
-        b.titleLabel?.font = .systemFont(ofSize: 18, weight: .semibold) // 変更: 13 → 18pt
-        b.backgroundColor = .tertiarySystemBackground // 追加: ボタン地色
-        b.layer.cornerRadius = 10 // 変更: 6 → 10（大きいボタンに合わせる）
-        b.contentHorizontalAlignment = .left // 追加: アイコン+文字を左寄せにして並びを揃える
-        b.contentEdgeInsets = UIEdgeInsets(top: 10, left: 16, bottom: 10, right: 16) // 変更: 押しやすい大きな余白
-        b.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true // 追加: 指で押しやすい高さを確保
-        // 追加: 「お天気分」らしく、気分・評価の選択肢には大きな天気マークを左に添える。
-        if let iconName {
-            // 追加: SF Symbols を大きめのポイントサイズで描画する。
-            let config = UIImage.SymbolConfiguration(pointSize: 24, weight: .semibold)
-            if let image = UIImage(systemName: iconName, withConfiguration: config) {
-                b.setImage(image, for: .normal) // 追加: 天気アイコン
-                b.imageEdgeInsets = UIEdgeInsets(top: 0, left: 0, bottom: 0, right: 10) // 追加: アイコンと文字の間隔
-                b.contentEdgeInsets = UIEdgeInsets(top: 10, left: 16, bottom: 10, right: 26) // 追加: アイコン分の余白
-            }
-        }
+        KeyboardAppearance.styleButton(b, title: title, symbol: iconName)
+        b.contentHorizontalAlignment = .left
+        b.heightAnchor.constraint(greaterThanOrEqualToConstant: 48).isActive = true
         return b
     }
 

@@ -24,6 +24,19 @@
 	<string>1</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>MacBookの研究サーバーに接続し、入力ログ・活動回答・SwitchBotの状態を同期するためにネットワークを使用します。Backend URL設定時は記録済みの入力本文や文脈も研究サーバーへ送信されます。</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>研究用の端末Contextとして、今日の歩数と歩行距離を読み取り研究サーバーへ送信します。</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>研究用の端末Contextとして、今日の予定のタイトルと時刻を研究サーバーへ送信します。</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>研究用の端末Contextとして、今日の予定のタイトルと時刻を研究サーバーへ送信します。</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

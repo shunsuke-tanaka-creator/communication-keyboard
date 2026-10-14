@@ -24,12 +24,22 @@ public enum NarrativeSettingsKeys {
     public static let lastKeyboardUse = "narrative.lastKeyboardUse"
     /// 手動イベントキュー: [["event": rawValue, "at": epoch秒]]
     public static let manualEventQueue = "narrative.manualEventQueue"
+    /// 追加: センサー由来の保留質問キュー: [["kind": rawValue, "at": epoch秒]]
+    public static let pendingKindQueue = "narrative.pendingKindQueue"
     /// 打鍵ベースライン（TypingFeatures を JSON エンコードして保存）
     public static let typingBaseline = "narrative.typingBaseline"
     /// 被験者 ID（研究設定）
     public static let participantID = "narrative.participantID"
-    /// 送信先ベース URL（研究設定 / 空なら送信しない）
+    /// 追加: 送信先ベース URL（v0.1 研究サーバー / 空なら送信しない）
     public static let backendBaseURL = "narrative.backendBaseURL"
+    /// 追加: 疑似センサー受信の ON/OFF（研究設定）。同一 LAN からの HTTP 受信を許可するか。
+    public static let sensorReceiveEnabled = "narrative.sensorReceiveEnabled"
+    /// 追加: 疑似センサー受信ポート（研究設定 / 既定 8770）
+    public static let sensorPort = "narrative.sensorPort"
+    /// 追加: 最後に受信したセンサーイベントの説明（Dashboard 表示用）
+    public static let lastSensorEvent = "narrative.lastSensorEvent"
+    /// 追加: 最後にセンサーイベントを受信した時刻: epoch秒
+    public static let lastSensorEventAt = "narrative.lastSensorEventAt"
     /// 質問機能の ON/OFF（研究設定）
     public static let narrativeEnabled = "narrative.enabled"
 }
@@ -178,6 +188,39 @@ public final class NarrativeState {
         }
     }
 
+    // MARK: - 追加: センサー由来の保留質問キュー
+    //
+    // 疑似センサー（温度 high/low など）から「この質問を次回出したい」と指定するためのキュー。
+    // ManualEvent を増やさずに任意の QuestionKind を積めるので、将来のセンサー質問も拡張しやすい。
+    // 消費は TriggerEngine ではなく KeyboardViewController 側で行う（手動イベントと同じ契約）。
+
+    /// 追加: 保留質問を1件積む。
+    public func enqueuePendingKind(_ kind: QuestionKind, at date: Date) {
+        guard let defaults else { return }
+        var queue = defaults.array(forKey: NarrativeSettingsKeys.pendingKindQueue) as? [[String: Any]] ?? []
+        queue.append(["kind": kind.rawValue, "at": date.timeIntervalSince1970])
+        defaults.set(queue, forKey: NarrativeSettingsKeys.pendingKindQueue)
+        NSLog("[MFK-Narrative] enqueuePendingKind kind=\(kind.rawValue)") // 追加: デバッグ
+    }
+
+    /// 追加: キューの内容を消費せずに覗く（Trigger 評価で使う）。
+    public func peekPendingKinds() -> [(QuestionKind, Date)] {
+        let queue = defaults?.array(forKey: NarrativeSettingsKeys.pendingKindQueue) as? [[String: Any]] ?? []
+        return queue.compactMap { item in
+            guard let raw = item["kind"] as? String,
+                  let kind = QuestionKind(rawValue: raw),
+                  let t = item["at"] as? Double else { return nil }
+            return (kind, Date(timeIntervalSince1970: t))
+        }
+    }
+
+    /// 追加: キューを全部取り出して空にする（回答保存後に消費する）。
+    public func dequeuePendingKinds() -> [(QuestionKind, Date)] {
+        let items = peekPendingKinds()
+        defaults?.removeObject(forKey: NarrativeSettingsKeys.pendingKindQueue)
+        return items
+    }
+
     // MARK: - 打鍵ベースライン
 
     /// 保存済みの打鍵ベースライン。
@@ -221,10 +264,42 @@ public final class NarrativeState {
         set { defaults?.set(newValue, forKey: NarrativeSettingsKeys.participantID) }
     }
 
-    /// 送信先ベース URL。既定は空（= 送信しない）。
+    /// MacBookのTailscale接続先。明示的に空文字を保存すると同期を停止する。
+    public static let recommendedBackendURL = "http://100.106.185.3:8000"
+
     public var backendBaseURL: String {
-        get { defaults?.string(forKey: NarrativeSettingsKeys.backendBaseURL) ?? "" }
+        get { defaults?.string(forKey: NarrativeSettingsKeys.backendBaseURL) ?? Self.recommendedBackendURL }
         set { defaults?.set(newValue, forKey: NarrativeSettingsKeys.backendBaseURL) }
+    }
+
+    /// 追加: 疑似センサー受信の ON/OFF。既定 false（明示的に有効化してもらう）。
+    public var sensorReceiveEnabled: Bool {
+        get { defaults?.bool(forKey: NarrativeSettingsKeys.sensorReceiveEnabled) ?? false }
+        set { defaults?.set(newValue, forKey: NarrativeSettingsKeys.sensorReceiveEnabled) }
+    }
+
+    /// 追加: 疑似センサー受信ポート。既定 8770。
+    public var sensorPort: Int {
+        get {
+            let v = defaults?.integer(forKey: NarrativeSettingsKeys.sensorPort) ?? 0
+            return v > 0 ? v : 8770 // 追加: 未設定(0)なら既定ポート
+        }
+        set { defaults?.set(newValue, forKey: NarrativeSettingsKeys.sensorPort) }
+    }
+
+    /// 追加: 最後に受信したセンサーイベントの説明（Dashboard 表示用）。
+    public var lastSensorEvent: String {
+        get { defaults?.string(forKey: NarrativeSettingsKeys.lastSensorEvent) ?? "" }
+        set { defaults?.set(newValue, forKey: NarrativeSettingsKeys.lastSensorEvent) }
+    }
+
+    /// 追加: 最後にセンサーイベントを受信した時刻。未受信なら nil。
+    public var lastSensorEventAt: Date? {
+        get {
+            guard let t = defaults?.object(forKey: NarrativeSettingsKeys.lastSensorEventAt) as? Double else { return nil }
+            return Date(timeIntervalSince1970: t)
+        }
+        set { defaults?.set(newValue?.timeIntervalSince1970, forKey: NarrativeSettingsKeys.lastSensorEventAt) }
     }
 
     /// 質問機能の ON/OFF。既定 true（キー未設定なら有効）。
@@ -248,6 +323,9 @@ public final class NarrativeState {
                     NarrativeSettingsKeys.firstKeyboardUse,
                     NarrativeSettingsKeys.lastKeyboardUse,
                     NarrativeSettingsKeys.manualEventQueue,
+                    NarrativeSettingsKeys.pendingKindQueue, // 追加: センサー由来の保留質問キューも消す
+                    NarrativeSettingsKeys.lastSensorEvent, // 追加: 受信表示のリセット
+                    NarrativeSettingsKeys.lastSensorEventAt, // 追加: 受信時刻のリセット
                     NarrativeSettingsKeys.typingBaseline] {
             defaults.removeObject(forKey: key)
         }

@@ -38,7 +38,7 @@ final class CandidateListView: UIView {
     required init?(coder: NSCoder) { return nil }
 
     private func setup() {
-        backgroundColor = .secondarySystemBackground
+        backgroundColor = KeyboardAppearance.surface
 
         collectionView.dataSource = self
         collectionView.delegate = self

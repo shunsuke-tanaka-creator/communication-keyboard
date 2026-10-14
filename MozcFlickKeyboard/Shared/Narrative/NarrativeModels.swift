@@ -31,6 +31,8 @@ public enum QuestionKind: String, Codable, CaseIterable {
     case freeNarrative
     /// 介入（提案）に対するフィードバック
     case interventionFeedback
+    /// 追加: 現在の主活動（大分類→詳細活動の2段階。v0.1 サーバーの最新質問で出す）
+    case activityCheck
 }
 
 // MARK: - 質問テンプレート

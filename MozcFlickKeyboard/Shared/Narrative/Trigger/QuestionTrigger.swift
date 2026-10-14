@@ -81,6 +81,25 @@ public final class ReturnHomeTrigger: QuestionTrigger {
     }
 }
 
+/// 追加: 疑似センサー由来の保留質問トリガー。
+/// NarrativeState.pendingKindQueue に積まれた QuestionKind をそのまま出題する。
+/// 温度 high/low → fatigueCheck のように、センサーが「この質問を出したい」と指定した場合に使う。
+/// キューの消費（dequeue）は回答保存後に KeyboardViewController が行う（手動イベントと同じ契約）。
+public final class SensorPendingTrigger: QuestionTrigger {
+    /// 追加: 保留質問キューを読むための状態ストア。
+    private let state: NarrativeState
+
+    public init(state: NarrativeState) {
+        self.state = state
+    }
+
+    public func evaluate(context: CurrentContext) -> TriggerResult? {
+        // 追加: 最も古い保留質問を1件だけ採用する（同時1問のため）。
+        guard let (kind, _) = state.peekPendingKinds().first else { return nil }
+        return TriggerResult(kind: kind, eventType: "sensor_pending", externalTrigger: "sensor")
+    }
+}
+
 // MARK: - Phase2 同梱（既定は無効）
 
 /// 追加: 長時間セッショントリガー（Phase2）。既定は enabled=false で発火しない。

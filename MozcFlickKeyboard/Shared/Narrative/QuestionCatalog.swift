@@ -35,13 +35,12 @@ public enum QuestionCatalog {
                                     cooldown: 0,
                                     maxPerDay: 1)
         case .nightReflection:
-            // 夜の振り返り: 1日1回、自由記述あり
+            // 変更: 夜の振り返りは 5項目×5段階（気分・疲労・ストレス・集中度・眠気）。
+            //       この選択肢で開始し、各項目は KeyboardViewController.showCurrentDailyScale が順に出す。
             return QuestionTemplate(kind: .nightReflection,
-                                    prompt: "今日はどんな1日でしたか？",
-                                    options: [QuestionOption(label: "良かった", value: "good"),
-                                              QuestionOption(label: "普通", value: "normal"),
-                                              QuestionOption(label: "大変だった", value: "difficult")],
-                                    allowFreeText: true,
+                                    prompt: "今日の振り返り（5項目・各5段階）に答えますか？",
+                                    options: [QuestionOption(label: "振り返りを始める", value: "start_daily_reflection")],
+                                    allowFreeText: false,
                                     cooldown: 0,
                                     maxPerDay: 1)
         case .outingDestination:
@@ -119,6 +118,14 @@ public enum QuestionCatalog {
                                     allowFreeText: false,
                                     cooldown: 0,
                                     maxPerDay: NarrativeConfig.maxQuestionsPerDay)
+        case .activityCheck:
+            // 追加: 現在の主活動。1段目は大分類（value = "category:<大分類>"）、2段目は Keyboard 側で出す。
+            return QuestionTemplate(kind: .activityCheck,
+                                    prompt: "今は何をしていますか？",
+                                    options: ResearchActivityCatalog.categoryOptions,
+                                    allowFreeText: false,
+                                    cooldown: 0,
+                                    maxPerDay: NarrativeConfig.maxQuestionsPerDay)
         }
     }
 
@@ -132,8 +139,8 @@ public enum NarrativeConfig {
     public static let maxQuestionsPerDay: Int = 5
     /// 朝トリガーの有効時間帯（6:00〜10:59 の「時」）。
     public static let morningHours: ClosedRange<Int> = 6...10
-    /// 夜トリガーの開始「時」（21:00〜）。
-    public static let nightStartHour: Int = 21
+    /// 変更: 夜トリガーの開始「時」（v0.1 仕様で 21:00 → 22:00 以降）。
+    public static let nightStartHour: Int = 22
     /// 夜トリガーの終了「時」（翌 02:00 まで）。
     public static let nightEndHour: Int = 2
     /// 「あとで」を押されたときの再表示までの間隔（30分）。

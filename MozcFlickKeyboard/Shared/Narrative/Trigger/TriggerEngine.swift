@@ -120,10 +120,12 @@ public final class TriggerEngine {
             SwitchBotContextProvider(),
             ManualContextProvider(state: state)
         ]
-        // 追加: 優先順は「手動 外出/帰宅 > 朝 > 夜 > 疲労/セッション」。
+        // 変更: 優先順は「センサー保留 > 手動 外出/帰宅 > 朝 > 夜 > 疲労/セッション」。
+        // センサー由来は明示的な外部イベントなので最優先で出す。
         let longSession = LongSessionTrigger()   // 追加: Phase2（既定 enabled=false）
         let fatigue = TypingFatigueTrigger(baseline: state.typingBaseline()) // 追加: Phase2（既定 enabled=false）
         let triggers: [QuestionTrigger] = [
+            SensorPendingTrigger(state: state), // 追加: 疑似センサーが指定した質問を最優先
             OutingTrigger(),
             ReturnHomeTrigger(),
             MorningTrigger(calendar: calendar),

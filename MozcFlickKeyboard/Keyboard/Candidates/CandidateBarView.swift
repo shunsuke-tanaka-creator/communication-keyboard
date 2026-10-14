@@ -27,9 +27,10 @@ final class CandidateBarView: UIView {
     private let collectionView: UICollectionView = {
         let layout = UICollectionViewFlowLayout()
         layout.scrollDirection = .horizontal
-        layout.minimumInteritemSpacing = 8
-        layout.estimatedItemSize = UICollectionViewFlowLayout.automaticSize
-        layout.sectionInset = UIEdgeInsets(top: 4, left: 8, bottom: 4, right: 8)
+        layout.minimumInteritemSpacing = 6
+        layout.minimumLineSpacing = 6
+        layout.estimatedItemSize = CGSize(width: 80, height: 32)
+        layout.sectionInset = UIEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
         let cv = UICollectionView(frame: .zero, collectionViewLayout: layout)
         cv.backgroundColor = .clear
         cv.showsHorizontalScrollIndicator = false
@@ -53,7 +54,13 @@ final class CandidateBarView: UIView {
     required init?(coder: NSCoder) { return nil }
 
     private func setup() {
-        backgroundColor = .secondarySystemBackground // ダークモード追従
+        backgroundColor = KeyboardAppearance.surface
+        tintColor = KeyboardAppearance.accent
+        expandButton.backgroundColor = KeyboardAppearance.accentSoft
+        expandButton.layer.cornerRadius = 10
+        expandButton.layer.cornerCurve = .continuous
+        expandButton.setPreferredSymbolConfiguration(
+            UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold), forImageIn: .normal)
 
         collectionView.dataSource = self
         collectionView.delegate = self
@@ -68,11 +75,12 @@ final class CandidateBarView: UIView {
             collectionView.leadingAnchor.constraint(equalTo: leadingAnchor),
             collectionView.topAnchor.constraint(equalTo: topAnchor),
             collectionView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            collectionView.trailingAnchor.constraint(equalTo: expandButton.leadingAnchor),
+            collectionView.trailingAnchor.constraint(equalTo: expandButton.leadingAnchor, constant: -6),
 
             expandButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             expandButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             expandButton.widthAnchor.constraint(equalToConstant: 36),
+            expandButton.heightAnchor.constraint(equalToConstant: 32),
         ])
     }
 
@@ -124,9 +132,10 @@ final class CandidateCell: UICollectionViewCell {
 
     private let label: UILabel = {
         let l = UILabel()
-        l.font = UIFont.preferredFont(forTextStyle: .body) // Dynamic Type
+        l.font = UIFontMetrics(forTextStyle: .body).scaledFont(
+            for: .systemFont(ofSize: 16, weight: .medium), maximumPointSize: 20)
         l.adjustsFontForContentSizeCategory = true
-        l.textColor = .label
+        l.textColor = KeyboardAppearance.ink
         l.lineBreakMode = .byTruncatingTail // 長い候補は末尾省略
         l.translatesAutoresizingMaskIntoConstraints = false
         return l
@@ -134,13 +143,14 @@ final class CandidateCell: UICollectionViewCell {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        contentView.layer.cornerRadius = 6
+        contentView.layer.cornerRadius = 9
+        contentView.layer.cornerCurve = .continuous
         contentView.addSubview(label)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 10),
-            label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -10),
-            label.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 6),
-            label.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -6),
+            label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
+            label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
+            label.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
+            label.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
             // 長すぎる候補の最大幅（省略のため）。
             label.widthAnchor.constraint(lessThanOrEqualToConstant: 220),
         ])
@@ -150,10 +160,21 @@ final class CandidateCell: UICollectionViewCell {
 
     required init?(coder: NSCoder) { return nil }
 
+    private var isCandidateFocused = false
+
+    override var isHighlighted: Bool {
+        didSet { updateAppearance() }
+    }
+
+    private func updateAppearance() {
+        contentView.backgroundColor = isCandidateFocused || isHighlighted ? KeyboardAppearance.accentSoft : KeyboardAppearance.key
+        label.textColor = isCandidateFocused || isHighlighted ? KeyboardAppearance.accent : KeyboardAppearance.ink
+    }
+
     func configure(text: String, focused: Bool) {
         label.text = text
-        contentView.backgroundColor = focused ? .systemBlue.withAlphaComponent(0.2) : .clear
-        label.textColor = focused ? .systemBlue : .label
+        self.isCandidateFocused = focused
+        updateAppearance()
         accessibilityLabel = text // VoiceOver
     }
 }

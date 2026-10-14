@@ -15,6 +15,8 @@ final class NarrativeDashboardViewController: UIViewController {
     /// 追加: 画面のセクション定義。
     private enum Section: Int, CaseIterable {
         case today   // 今日の記録
+        case sensor  // 追加: 疑似センサー受信状態
+        case test    // 追加: 疑似センサーテスト（アプリ内から直接注入）
         case manual  // 手動イベント
         case export  // エクスポート
     }
@@ -32,6 +34,9 @@ final class NarrativeDashboardViewController: UIViewController {
     /// 追加: JSONL 読み出し用ストア。
     private let store = NarrativeStore()
 
+    /// 追加: 疑似センサーのアプリ内注入に使うルーター（HTTP 受信と同じ経路を通す）。
+    private lazy var sensorRouter = SensorEventRouter(state: state, store: store)
+
     /// 追加: 今日の記録セクションの行データ。viewWillAppear で再計算する。
     private var summaryRows: [SummaryRow] = []
 
@@ -45,6 +50,17 @@ final class NarrativeDashboardViewController: UIViewController {
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         reloadSummary() // 追加: 表示のたびに当日記録を再計算して反映
+        // 追加: 疑似センサーの受信を検知したら、その場で当日記録と受信状態を更新する。
+        SensorHTTPServer.shared.onEventReceived = { [weak self] event in
+            NSLog("[MFK-Sensor] dashboard refresh by type=\(event.type)") // 追加: 受信反映のデバッグ
+            self?.reloadSummary()
+        }
+    }
+
+    /// 追加: 画面を離れるときはコールバックを外す（他画面での不要な更新を避ける）。
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        SensorHTTPServer.shared.onEventReceived = nil
     }
 
     /// 追加: テーブルビューを構築する（既存 App 画面と同じ流儀）。
@@ -124,6 +140,32 @@ final class NarrativeDashboardViewController: UIViewController {
         reloadSummary() // 追加: 記録後に再描画
     }
 
+    // MARK: - 追加: 疑似センサーのアプリ内注入（テストモード）
+
+    /// 追加: プリセットを SensorEventRouter へ直接流す。HTTP を経由しないので Mac / 同一 Wi-Fi 不要。
+    /// Python CLI と同じ type / value・同じ Router を通るため、挙動は実際の受信と完全に同じになる。
+    private func injectSensorPreset(_ preset: SensorPreset) {
+        let event = preset.makeEvent() // 追加: タップ時刻でイベント生成
+        let result = sensorRouter.route(event) // 追加: 振り分け（キュー投入 + ContextEvent 保存）
+        NSLog("[MFK-Sensor] dashboard inject type=\(event.type) value=\(event.value ?? "-")") // 追加: デバッグ
+
+        // 追加: 何が起きたか（次にどの質問が出るか）をユーザーへ明示する。
+        var detail: String
+        if let manual = result.manualEvent {
+            detail = "「\(manual.displayName)」として記録しました。次にキーボードを開くと質問が出ます。"
+        } else if let kind = result.pendingKind {
+            detail = "質問「\(QuestionCatalog.template(for: kind).prompt)」を予約しました。次にキーボードを開くと出ます。"
+        } else {
+            detail = "文脈として記録しました（質問は出ません）。"
+        }
+        let alert = UIAlertController(title: "注入しました：\(preset.title)",
+                                      message: detail,
+                                      preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default))
+        present(alert, animated: true)
+        reloadSummary() // 追加: 受信表示・当日記録を更新
+    }
+
     // MARK: - エクスポート
 
     /// 追加: 保存済み全ファイルの NarrativeEvent を集めて返す。
@@ -191,12 +233,14 @@ final class NarrativeDashboardViewController: UIViewController {
 extension NarrativeDashboardViewController: UITableViewDataSource, UITableViewDelegate {
 
     func numberOfSections(in tableView: UITableView) -> Int {
-        return Section.allCases.count // 追加: 今日の記録 / 手動イベント / エクスポート
+        return Section.allCases.count // 変更: 今日の記録 / 疑似センサー / 手動イベント / エクスポート
     }
 
     func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
         switch Section(rawValue: section) {
         case .today:  return "今日の記録" // 追加
+        case .sensor: return "疑似センサー（このアプリを開いている間だけ受信）" // 追加
+        case .test:   return "疑似センサーテスト（Mac不要・タップで直接注入）" // 追加
         case .manual: return "手動イベント" // 追加
         case .export: return "エクスポート" // 追加
         case .none:   return nil
@@ -206,6 +250,8 @@ extension NarrativeDashboardViewController: UITableViewDataSource, UITableViewDe
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         switch Section(rawValue: section) {
         case .today:  return summaryRows.count // 追加
+        case .sensor: return 2 // 追加: 稼働状態 / 最後の受信
+        case .test:   return SensorPreset.all.count // 追加: プリセット8種
         case .manual: return ManualEvent.allCases.count // 追加: 4ボタン
         case .export: return 2 // 追加: JSON / CSV
         case .none:   return 0
@@ -224,6 +270,44 @@ extension NarrativeDashboardViewController: UITableViewDataSource, UITableViewDe
             config.secondaryText = row.value
             cell.contentConfiguration = config
             cell.selectionStyle = .none
+        case .sensor:
+            // 追加: 疑似センサーの受信状態（0=稼働状態と接続先、1=最後に受けたイベント）。
+            var config = UIListContentConfiguration.valueCell()
+            if indexPath.row == 0 {
+                config.text = "受信状態"
+                let running = SensorHTTPServer.shared.isRunning
+                let ip = SensorHTTPServer.currentWiFiIPAddress() ?? "IP取得不可"
+                // 追加: OFF のときは設定への誘導、ON のときは接続先を出す。
+                if !state.sensorReceiveEnabled {
+                    config.secondaryText = "OFF（設定で有効化）"
+                } else {
+                    config.secondaryText = "\(running ? "受信中" : "停止中") \(ip):\(state.sensorPort)"
+                }
+            } else {
+                config.text = "最後の受信"
+                // 追加: 未受信なら "—"、受信済みなら「type=value HH:mm:ss」を出す。
+                if state.lastSensorEvent.isEmpty {
+                    config.secondaryText = "—"
+                } else {
+                    let f = DateFormatter()
+                    f.locale = Locale(identifier: "en_US_POSIX")
+                    f.dateFormat = "HH:mm:ss"
+                    let time = state.lastSensorEventAt.map { f.string(from: $0) } ?? ""
+                    config.secondaryText = "\(state.lastSensorEvent) \(time)"
+                }
+            }
+            cell.contentConfiguration = config
+            cell.selectionStyle = .none
+        case .test:
+            // 追加: 疑似センサーのプリセット注入ボタン行。Mac が無くても同じ経路（Router）で試せる。
+            var config = cell.defaultContentConfiguration()
+            let preset = SensorPreset.all[indexPath.row]
+            config.text = preset.title
+            // 追加: 実際に送られる type=value を副題に出し、Python CLI との対応が分かるようにする。
+            config.secondaryText = preset.value.map { "\(preset.type)=\($0)" } ?? preset.type
+            config.textProperties.color = .systemBlue
+            cell.contentConfiguration = config
+            cell.selectionStyle = .default
         case .manual:
             // 追加: 手動イベントボタン行。
             var config = cell.defaultContentConfiguration()
@@ -247,6 +331,8 @@ extension NarrativeDashboardViewController: UITableViewDataSource, UITableViewDe
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         switch Section(rawValue: indexPath.section) {
+        case .test:
+            injectSensorPreset(SensorPreset.all[indexPath.row]) // 追加: 疑似センサーを直接注入
         case .manual:
             recordManualEvent(ManualEvent.allCases[indexPath.row]) // 追加: 手動イベント登録
         case .export:

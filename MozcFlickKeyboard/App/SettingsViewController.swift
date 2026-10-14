@@ -139,15 +139,19 @@ final class SettingsViewController: UIViewController {
     // 追加: 研究設定（お天気分）— 各テキストフィールドの tag 定数（予定行の tag=行番号と衝突しない値）。
     private enum NarrativeFieldTag: Int {
         case participantID = 9001 // 追加: 参加者ID フィールド
-        case backendURL = 9002    // 追加: Backend URL フィールド
+        case sensorPort = 9002    // 変更: Backend URL → 疑似センサー受信ポート
+        case backendURL = 9003    // 追加: v0.1 研究サーバーの Backend URL（復活）
     }
 
-    // 追加: 参加者ID / Backend URL の編集を NarrativeState 経由で App Group へ保存する。
+    // 変更: 参加者ID / 疑似センサーポートの編集を NarrativeState 経由で App Group へ保存する。
     @objc private func narrativeTextChanged(_ sender: UITextField) {
         let text = sender.text ?? ""
         switch NarrativeFieldTag(rawValue: sender.tag) {
         case .participantID: narrativeState.participantID = text // 追加: 参加者ID を保存
-        case .backendURL:    narrativeState.backendBaseURL = text // 追加: 空なら通常入力本文は勿論、研究回答もローカルのみ
+        case .sensorPort:
+            // 追加: 数字のみ受け付ける。空・不正なら既定 8770 に戻す。
+            narrativeState.sensorPort = Int(text) ?? 8770
+        case .backendURL: narrativeState.backendBaseURL = text // 追加: 空なら送信しない（端末内のみ）
         case .none: break
         }
     }
@@ -155,6 +159,18 @@ final class SettingsViewController: UIViewController {
     // 追加: 質問機能 ON/OFF を NarrativeState 経由で保存する。
     @objc private func narrativeEnabledChanged(_ sender: UISwitch) {
         narrativeState.narrativeEnabled = sender.isOn // 追加: 質問機能の有効/無効を保存
+    }
+
+    // 追加: 疑似センサー受信 ON/OFF。ON にした瞬間から（前面なので）待ち受けを開始する。
+    @objc private func sensorReceiveChanged(_ sender: UISwitch) {
+        narrativeState.sensorReceiveEnabled = sender.isOn // 追加: 設定を保存
+        if sender.isOn {
+            SensorHTTPServer.shared.start(port: narrativeState.sensorPort) // 追加: 即座に待ち受け開始
+        } else {
+            SensorHTTPServer.shared.stop() // 追加: 待ち受け停止
+        }
+        tableView.reloadData() // 追加: 稼働状態・IP 表示を更新
+        NSLog("[MFK-Sensor] settings receiveEnabled=\(sender.isOn) port=\(narrativeState.sensorPort)") // 追加: デバッグ
     }
 
     /// 追加: 予定が1件も無いときだけ、サンプル予定を初回投入する（既存の登録は絶対に上書きしない）。
@@ -280,7 +296,7 @@ extension SettingsViewController: UITableViewDataSource {
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         if section == 1 { return schedules.count } // 変更: 予定の件数
-        if section == 2 { return 3 } // 追加: 参加者ID / Backend URL / 質問機能
+        if section == 2 { return 6 } // 変更: 参加者ID / 質問機能 / 疑似センサー受信 / 受信ポート / 接続先案内 / Backend URL（追加）
         return items.count
     }
 
@@ -367,10 +383,14 @@ extension SettingsViewController: UITableViewDataSource {
         }
 
         // 追加: section2 は研究設定（お天気分）。0=参加者ID, 1=Backend URL, 2=質問機能 ON/OFF。
+        // 変更: section2「研究設定（お天気分）」は5行構成。
+        // 0: 参加者ID / 1: 質問機能 / 2: 疑似センサー受信 ON/OFF / 3: 受信ポート / 4: 接続先の案内（IP・状態）
+        // 追加: 5: Backend URL（v0.1 研究サーバー。空なら送信しない）
         if indexPath.section == 2 {
             let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
             cell.selectionStyle = .none
-            if indexPath.row == 2 {
+
+            if indexPath.row == 1 {
                 // 追加: 質問機能 ON/OFF のスイッチ行。
                 var config = cell.defaultContentConfiguration()
                 config.text = "質問機能"
@@ -384,7 +404,35 @@ extension SettingsViewController: UITableViewDataSource {
                 return cell
             }
 
-            // 追加: 参加者ID / Backend URL の編集フィールド行（ラベル + テキストフィールド）。
+            if indexPath.row == 2 {
+                // 追加: 疑似センサー受信 ON/OFF のスイッチ行。
+                var config = cell.defaultContentConfiguration()
+                config.text = "疑似センサー受信"
+                config.secondaryText = "同一Wi-FiのPCからイベントを受け取る（このアプリを開いている間のみ）"
+                cell.contentConfiguration = config
+                let toggle = UISwitch()
+                toggle.isOn = narrativeState.sensorReceiveEnabled // 追加: 現在値を反映
+                toggle.accessibilityLabel = "疑似センサー受信"
+                toggle.addTarget(self, action: #selector(sensorReceiveChanged(_:)), for: .valueChanged)
+                cell.accessoryView = toggle
+                return cell
+            }
+
+            if indexPath.row == 4 {
+                // 追加: 接続先の案内行（Python CLI に渡す IP とポート、稼働状態）。
+                var config = cell.defaultContentConfiguration()
+                config.text = "接続先"
+                let ip = SensorHTTPServer.currentWiFiIPAddress() ?? "取得できません（Wi-Fi未接続）"
+                let running = SensorHTTPServer.shared.isRunning ? "受信中" : "停止中"
+                // 追加: そのままコマンドに貼れる形で案内する。
+                config.secondaryText = "\(running) / \(ip):\(narrativeState.sensorPort)\n"
+                    + "Macで: python3 tools/sensor_inject.py --host \(SensorHTTPServer.currentWiFiIPAddress() ?? "<iPhoneのIP>") door_open"
+                config.secondaryTextProperties.numberOfLines = 0 // 追加: 折り返して全文見せる
+                cell.contentConfiguration = config
+                return cell
+            }
+
+            // 追加: 参加者ID / 受信ポート の編集フィールド行（ラベル + テキストフィールド）。
             let titleLabel = UILabel()
             titleLabel.font = .systemFont(ofSize: 15)
             titleLabel.setContentHuggingPriority(.required, for: .horizontal)
@@ -392,19 +440,25 @@ extension SettingsViewController: UITableViewDataSource {
             let field = UITextField()
             field.borderStyle = .roundedRect
             field.delegate = self
-            field.autocapitalizationType = .none // 追加: ID / URL は自動大文字化しない
+            field.autocapitalizationType = .none // 追加: ID / ポートは自動大文字化しない
             field.autocorrectionType = .no
             if indexPath.row == 0 {
                 titleLabel.text = "参加者ID" // 追加
                 field.text = narrativeState.participantID // 追加: 現在値を反映（既定 p001）
                 field.placeholder = "p001"
                 field.tag = NarrativeFieldTag.participantID.rawValue // 追加
-            } else {
-                titleLabel.text = "Backend URL" // 追加
+            } else if indexPath.row == 5 {
+                titleLabel.text = "Backend URL" // 追加: v0.1 研究サーバー
                 field.text = narrativeState.backendBaseURL // 追加: 現在値を反映（空なら送信しない）
-                field.placeholder = "http://192.168.x.x:8000" // 追加: 空なら送信しない
+                field.placeholder = NarrativeState.recommendedBackendURL // 追加: Ubuntu の Tailscale IP
                 field.keyboardType = .URL
                 field.tag = NarrativeFieldTag.backendURL.rawValue // 追加
+            } else {
+                titleLabel.text = "受信ポート" // 変更: Backend URL → 受信ポート
+                field.text = "\(narrativeState.sensorPort)" // 追加: 現在値を反映（既定 8770）
+                field.placeholder = "8770"
+                field.keyboardType = .numberPad // 追加: ポートは数字のみ
+                field.tag = NarrativeFieldTag.sensorPort.rawValue // 追加
             }
             field.addTarget(self, action: #selector(narrativeTextChanged(_:)), for: .editingChanged)
 

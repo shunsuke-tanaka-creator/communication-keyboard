@@ -1,6 +1,6 @@
 # MozcFlickKeyboard
 
-iPhone 専用の 12 キー日本語フリックキーボード（Custom Keyboard Extension）です。かな漢字変換エンジンに [Mozc](https://github.com/google/mozc) を用います。**通常のキーボード入力は完全に端末内で完結し、入力本文を外部へ送信しません。** 研究用の追加機能「お天気分」のみ、研究者が Backend URL を設定した場合に限り研究データ（回答・打鍵統計等）を任意送信します（既定はオフ。詳細は [docs/narrative-integration.md](docs/narrative-integration.md)）。
+iPhone専用の日本語フリックキーボードです。変換は端末内で実行します。MacBook統合版では、記録された入力本文・文脈・活動回答・端末ContextをTailscale経由でMacに同期し、SwitchBotの開閉ログと合わせて「くらしのログ」に表示します。接続先の初期値は `http://100.106.185.3:8000`、空欄にすると同期を停止します。セットアップと制限は [docs/macbook-lifelog.md](docs/macbook-lifelog.md) を参照してください。
 
 > 研究用途（久保田研究室）で開発しています。名称・商標について「Google 日本語入力」の名称は使用しません（[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 参照）。
 
@@ -17,8 +17,8 @@ iPhone 専用の 12 キー日本語フリックキーボード（Custom Keyboard
 ### 研究機能「お天気分」（micro-diary）
 
 - キーボード上部に短い質問バナー（朝の気分・夜の振り返り・外出/帰宅など）を1問だけ表示し、1〜2 タップまたは短い自由記述で回答できる研究用マイクロ日記機能です。
-- 回答は研究データ（`NarrativeEvent`）として端末内に保存され、**ホストアプリのテキスト欄には一切挿入されません**。通常入力の本文は収集・送信しません。
-- **Backend への送信は任意で既定オフ**（Backend URL 未設定なら端末内のみ）。実装・データ形状・操作方法・テスト方法・残課題は [docs/narrative-integration.md](docs/narrative-integration.md) を参照してください。
+- 回答は研究データ（`NarrativeEvent`）として端末内に保存され、**ホストアプリのテキスト欄には一切挿入されません**。入力セッションの本文・文脈は別の研究ログ経路でMacへ同期されます。
+- MacBook統合版のBackend URL初期値は `http://100.106.185.3:8000` です。明示的に空欄にすると同期を停止します。
 
 主要ドキュメント:
 
@@ -27,7 +27,7 @@ iPhone 専用の 12 キー日本語フリックキーボード（Custom Keyboard
 | [docs/architecture.md](docs/architecture.md) | 全体構成 / ターゲット責務 / Swift↔C++ 境界 / 状態遷移 |
 | [docs/ios-keyboard-limitations.md](docs/ios-keyboard-limitations.md) | Custom Keyboard Extension の制約 |
 | [docs/testing.md](docs/testing.md) | テスト方針と実行方法 |
-| [docs/privacy.md](docs/privacy.md) | プライバシー方針（通常入力は端末内完結 / お天気分の任意送信） |
+| [docs/privacy.md](docs/privacy.md) | プライバシー方針・Macへのログ同期範囲 |
 | [docs/narrative-integration.md](docs/narrative-integration.md) | お天気分（micro-diary）の設計・データモデル・操作/テスト方法・残課題 |
 | [docs/performance.md](docs/performance.md) | 性能目標と測定方法 |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | ビルドエラーと解決 |

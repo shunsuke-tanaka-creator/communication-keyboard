@@ -26,6 +26,15 @@ public final class QuestionPolicy {
         kind == .outingDestination || kind == .outingEvaluation
     }
 
+    /// 追加: センサー由来で積まれた質問かどうか（pendingKindQueue に載っているか）。
+    /// 疑似センサー（玄関開閉・温度など）は「その都度発生した実事象」なので、
+    /// 外出/帰宅と同じく「当日1回」制約を免除する。これが無いと
+    /// 温度 high を2回注入しても2回目が出ない（実験中の再現ができない）。
+    /// なお cooldown（fatigueCheck は60分）と1日上限は引き続き効くため、出しすぎにはならない。
+    private func isSensorQueuedKind(_ kind: QuestionKind) -> Bool {
+        state.peekPendingKinds().contains { $0.0 == kind }
+    }
+
     /// 追加: 今この種別を出してよいか。すべての制約を満たしたときだけ true。
     public func canShow(kind: QuestionKind, now: Date) -> Bool {
         // 追加: 質問機能が OFF なら一切出さない。
@@ -39,11 +48,15 @@ public final class QuestionPolicy {
         // 追加: snooze 期限内なら出さない。
         if let until = state.snoozeUntil(kind: kind), now < until { return false }
 
-        // 追加: 手動由来以外は「当日既に回答済みなら出さない」（morningMood 等 maxPerDay=1 の制約もこれで満たす）。
-        // 追加: 手動由来（外出先/外出評価）は毎回新規事象なので免除し、種別ごとの回数は 1日上限 maxQuestionsPerDay で間接的に抑える。
-        if !isManualKind(kind), state.isAnswered(kind: kind, on: now) { return false }
+        // 変更: 手動由来・センサー由来以外は「当日既に回答済みなら出さない」（morningMood 等 maxPerDay=1 の制約もこれで満たす）。
+        // 変更: 手動由来（外出先/外出評価）とセンサー由来（pendingKindQueue）は毎回新規事象なので免除し、
+        //       種別ごとの回数は cooldown と 1日上限 maxQuestionsPerDay で間接的に抑える。
+        if !isManualKind(kind), !isSensorQueuedKind(kind), state.isAnswered(kind: kind, on: now) { return false }
 
         // 追加: 種別 cooldown（前回表示から template.cooldown 秒経っていなければ出さない）。
+        // 注意: センサー由来でも cooldown は免除しない（fatigueCheck は60分）。
+        //       これは「質問を出しすぎない」要件を守るため。実験で温度 high を連続注入した場合、
+        //       2回目以降は60分経つまで出題されない（キューには残り、cooldown 明けに出る）。
         if template.cooldown > 0, let last = state.lastShown(kind: kind) {
             if now.timeIntervalSince(last) < template.cooldown { return false }
         }

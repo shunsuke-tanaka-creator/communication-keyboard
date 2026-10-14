@@ -1,5 +1,7 @@
 # アーキテクチャ
 
+> MacBook統合版の現行仕様は [macbook-lifelog.md](macbook-lifelog.md) を参照してください。以下のPhase 1設計にある「ローカルのみ」「送信機能は削除済み」の記述は旧仕様です。現在は入力セッション・回答・文脈をMacに同期します。
+
 MozcFlickKeyboard は「ホストアプリ」と「Keyboard Extension」の 2 ターゲットから成り、共通ロジックを Shared として共有します。かな漢字変換は Mozc（C++）を Swift から呼び出して実現し、Mozc 未ビルド時は同一プロトコルのローカルスタブへ差し替えて動作します。
 
 ---
@@ -152,9 +154,9 @@ Mozc は C++ で書かれているため、Swift から直接呼べません。�
 
 ## 11. お天気分（Narrative）サブシステム
 
-研究用マイクロ日記「お天気分」を Shared（`MozcFlickShared`）へ新規追加した。日常イベントを検知／推定してキーボード上部に質問バナーを1問出し、回答を `NarrativeEvent` として保存する。通常の変換・入力経路には影響を与えず、回答はホストアプリのテキスト欄（`UITextDocumentProxy`）へ挿入しない。詳細な運用・データ形状は [narrative-integration.md](narrative-integration.md)、プライバシー方針は [privacy.md](privacy.md) を参照。
+研究用マイクロ日記「お天気分」を Shared（`MozcFlickShared`）へ新規追加した。日常イベントを検知／推定してキーボード上部に質問バナーを1問出し、回答を `NarrativeEvent` として保存する。通常の変換・入力経路には影響を与えず、回答はホストアプリのテキスト欄（`UITextDocumentProxy`）へ挿入しない。研究データは**端末内 JSONL のみ**に保存し、外部送信は行わない（バックエンド送信は削除済み）。詳細な運用・データ形状は [narrative-integration.md](narrative-integration.md)、プライバシー方針は [privacy.md](privacy.md) を参照。
 
-処理は「Context → Trigger → Policy → Question → Banner → Answer → NarrativeEvent → Analyzer/PMTT → Repository」の一方向フローで構成する。
+処理は「Context → Trigger → Policy → Question → Banner → Answer → NarrativeEvent → Analyzer/PMTT → Repository」の一方向フローで構成する。加えて、疑似センサー入力の経路として「Python CLI（同一 LAN の PC）→ 親アプリの受信サーバー → Router → App Group（キュー / JSONL）→ キーボード」を持つ。
 
 ```mermaid
 flowchart TD
@@ -175,12 +177,25 @@ flowchart TD
   Answer --> Event["NarrativeEvent"]
   Event --> Analyzer["NarrativeAnalyzer (Mock)"]
   Event --> PMTT["PMTTAdapter (Mock)"]
-  Event --> Hub["NarrativeRepositoryHub"]
-  Hub --> Local["LocalRepository (JSONL)"]
-  Hub --> Remote["RemoteRepository (URL未設定なら送信せず退避のみ / throwしない)"]
+  Event --> Hub["NarrativeRepositoryHub (ローカルのみ)"]
+  Hub --> Local["LocalRepository"]
+  Local --> Store["NarrativeStore (App Group JSONL)"]
+  subgraph SensorPath["疑似センサー受信 (親アプリ前面時のみ)"]
+    Py["Python CLI (同一LANのPC)"] -->|"POST /sensor"| Srv["SensorHTTPServer (Network.framework)"]
+    Srv --> Router["SensorEventRouter"]
+  end
+  Router -->|"door_open/close"| MQueue["NarrativeState 手動イベントキュー"]
+  Router -->|"temperature high/low"| PQueue["NarrativeState 保留質問キュー"]
+  Router -->|"全 type を記録"| Store
+  MQueue --> ManP
+  PQueue --> Triggers
 ```
 
-- **配置**: 純ロジック（Models / Catalog / State / Store / Repository / Context / Trigger / Policy / TypingMetrics / Analyzer / Recommendation / PMTT）は Shared に置き、UI（`NarrativeQuestionBanner`）は Keyboard 拡張、ダッシュボードは App に置く。UITextDocumentProxy へ触れるのは従来どおり Keyboard 拡張のみで、回答経路はそこを構造的に呼ばない。
-- **状態と保存**: 出題制御状態は App Group `UserDefaults`（`NarrativeState`）、イベント本体は App Group 共有コンテナ `Narrative/*.jsonl`（`NarrativeStore`、既存 `SafetyCheckLog` と同じ流儀で throw しない）。
-- **エラー設計**: 既存方針に合わせ、保存・送信のいずれも throw しない。送信は best-effort で、失敗時は `unsent_narrative.jsonl` へ退避（キーボード拡張の入力継続を最優先）。
-- **フェーズゲート**: Phase 1 は朝 / 夜 / 外出 / 帰宅の Trigger のみ有効。`TypingFatigueTrigger` / `LongSessionTrigger` は同梱するが既定 `enabled=false`（Phase 2）。`SwitchBotContextProvider` は stub（Phase 3）。`NarrativeAnalyzer` / `PMTTAdapter` / `RecommendationEngine` は Mock 実装で、CoreML / LLM / FastAPI 等へ差し替え可能なプロトコル境界を用意している（Phase 4）。
+- **配置**: 純ロジック（Models / Catalog / State / Store / Repository / Context / Trigger / Policy / TypingMetrics / Analyzer / Recommendation / PMTT / Sensor の Router）は Shared に置き、UI（`NarrativeQuestionBanner`）は Keyboard 拡張、ダッシュボードと受信サーバー（`SensorHTTPServer`）は App に置く。UITextDocumentProxy へ触れるのは従来どおり Keyboard 拡張のみで、回答経路はそこを構造的に呼ばない。
+- **状態と保存**: 出題制御状態は App Group `UserDefaults`（`NarrativeState`）、イベント本体は App Group 共有コンテナ `Narrative/*.jsonl`（`NarrativeStore`、既存 `SafetyCheckLog` と同じ流儀で throw しない）。ファイルは `narrative_yyyyMMdd.jsonl` と `context_yyyyMMdd.jsonl` の2種のみ。
+- **保存先**: `NarrativeRepositoryHub` は `LocalRepository` だけを包む（`init(store:)`）。バックエンド送信（URLSession によるサーバー送信）は削除し、研究データは端末内に留める。将来送信が必要になったらこの Repository 層に別クラスを足して Hub から呼ぶ。
+- **疑似センサー受信**: 親アプリが Network.framework（`NWListener` + TCP）で `POST /sensor` を待ち受け、`SensorEventRouter` が「手動イベントキュー（外出/帰宅）」「保留質問キュー（疲労チェック）」「`ContextEvent`（`sensor_<type>` / `source="sensor"`）」へ振り分ける。キーボードへは App Group 経由で橋渡しし、次回のキーボード表示または 60 秒チェックで拾われる。iOS の制約により**親アプリが前面のときだけ**受信でき、`SceneDelegate` の active/背面で start/stop する（設定 ON のときのみ）。
+
+- **端末Context（HealthKit 活動量）**: 親アプリの `ResearchContextCollector` が HealthKit を読み取りのみで取得し、App Group の `ResearchDeviceContext` へ保存する。合計系（歩数 / 歩行距離 / 登った階段 / 活動エネルギー）は今日0時〜現在、平均系（歩行速度 / 歩幅 / 歩行非対称性）は直近1時間で集計する。`HKObserverQuery` + `enableBackgroundDelivery(.hourly)`（`AppDelegate.didFinishLaunching` で起動）によりバックグラウンドでも約1時間ごとに更新する。キーボード拡張は HealthKit を直接扱えないため、下部「情報」ボタンの Info ページ（`NarrativeQuestionBanner.showInfo`）で App Group の保存値を全画面表示するだけに留める。これらは `ResearchSessionUpload.context` としてサーバー送信にも含まれる。
+- **エラー設計**: 既存方針に合わせ、保存は throw しない（失敗はログのみで入力継続を最優先）。受信サーバーも失敗時はログを出して停止するだけで、キーボードの動作には影響しない。
+- **フェーズゲート**: Phase 1 は朝 / 夜 / 外出 / 帰宅の Trigger と疑似センサー由来の `SensorPendingTrigger` が有効。`TypingFatigueTrigger` / `LongSessionTrigger` は同梱するが既定 `enabled=false`（Phase 2）。`SwitchBotContextProvider` は stub（Phase 3）で、実センサー連携時は疑似センサー経路を差し替える。`NarrativeAnalyzer` / `PMTTAdapter` / `RecommendationEngine` は Mock 実装で、CoreML / LLM 等へ差し替え可能なプロトコル境界を用意している（Phase 4）。
