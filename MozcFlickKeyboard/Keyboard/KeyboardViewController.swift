@@ -34,14 +34,31 @@ final class KeyboardViewController: UIInputViewController {
     private lazy var inputState: InputState = {
         let engine: JapaneseConversionEngine
         #if MOZC_AVAILABLE
-        engine = MozcConversionEngine()
+        let mozc = MozcConversionEngine()
+        engine = mozc.isMozcAvailable ? mozc : LocalStubEngine()
         NSLog("[MFK] engine = MozcConversionEngine (MOZC_AVAILABLE=ON) isMozcAvailable=\((engine as? MozcConversionEngine)?.isMozcAvailable ?? false)") // 追加: エンジン種別のデバッグ
         #else
         engine = LocalStubEngine()
         NSLog("[MFK] engine = LocalStubEngine (MOZC_AVAILABLE=OFF)") // 追加: エンジン種別のデバッグ
         #endif
-        return InputState(engine: engine)
+        let personalized = PersonalizedConversionEngine(base: engine,
+            dictionaryEntries: { [weak self] reading in
+                self?.userDictionary?.search(prefix: reading, enabledOnly: true) ?? []
+            }, learningScores: { [weak self] reading in
+                guard let store = self?.learningStore, store.isLearningEnabled, !store.isPrivateMode else { return [:] }
+                return store.scores(forReading: reading)
+            }, recordSelection: { [weak self] reading, word in
+                guard let self else { return }
+                do {
+                    try self.learningStore?.recordSelection(reading: reading, word: word,
+                        isSecureInput: self.textDocumentProxy.isSecureTextEntry ?? false)
+                } catch { NSLog("[MFK] Could not save candidate learning: %@", String(describing: error)) }
+            })
+        return InputState(engine: personalized)
     }()
+
+    private var userDictionary: UserDictionaryStore?
+    private var learningStore: LearningStore?
 
     /// 12キー UI 本体。
     private let keyboardView = KeyboardView()
@@ -143,6 +160,7 @@ final class KeyboardViewController: UIInputViewController {
     // 変更: キーボードを開いたときに「次の予定」を1回だけ表示する（時刻トリガーはやめた）。
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        applySettings()
         updateInfoBar()
         startCheckTimer() // 追加: 表示中は1分間隔で予定を再判定する。
         // 追加: セッション記録を有効化（プライベートモード ON のときは記録しない）。
@@ -291,9 +309,9 @@ final class KeyboardViewController: UIInputViewController {
             keyboardView.topAnchor.constraint(equalTo: guide.topAnchor),
             keyboardView.bottomAnchor.constraint(equalTo: guide.bottomAnchor),
         ])
-        // 追加: キーボード全体の高さは可変制約で管理する。ベースを 260pt に拡大し（キーを大きく）、
+        // 追加: キーボード全体の高さは可変制約で管理する。ベースを 290pt にして各キーの高さを約46ptに確保し、
         //       バナー表示時はその分だけ上乗せしてキー領域が縮まないようにする。
-        let baseHeight: CGFloat = 260
+        let baseHeight: CGFloat = 290
         let hc = keyboardView.heightAnchor.constraint(greaterThanOrEqualToConstant: baseHeight)
         hc.priority = .required
         hc.isActive = true
@@ -319,6 +337,14 @@ final class KeyboardViewController: UIInputViewController {
         let flickOnly = d?.bool(forKey: SettingsKeys.flickOnlyEnabled) ?? false
         inputState.toggleInputEnabled = toggle
         inputState.flickOnlyEnabled = flickOnly
+        let learning = d?.object(forKey: SettingsKeys.learningEnabled) as? Bool ?? true
+        let isPrivate = d?.bool(forKey: SettingsKeys.privateModeEnabled) ?? false
+        // Reload when the extension reappears so host-app dictionary changes are visible.
+        userDictionary = hasFullAccess ? try? UserDictionaryStore() : nil
+        learningStore = hasFullAccess ? try? LearningStore() : nil
+        learningStore?.isLearningEnabled = learning
+        learningStore?.isPrivateMode = isPrivate
+        inputState.setLearningEnabled(learning && !isPrivate && hasFullAccess)
         // 追加: Full Access 無しの Keyboard Extension は触覚フィードバックがサンドボックスで
         // 使えず AVAudioSession/CHHapticEngine のエラーログを吐き続ける。hasFullAccess で抑制する。
         let haptics = hasFullAccess
@@ -732,6 +758,20 @@ final class KeyboardViewController: UIInputViewController {
 
 extension KeyboardViewController: KeyboardActionDelegate {
 
+    func keyboardDidInputKey(keyID: String, direction: FlickDirection) {
+        guard let key = KanaTable.key(for: keyID), let text = key.character(for: direction) else { return }
+        if researchInputMode {
+            appendResearchText(keyboardView.inputMode == .katakana ? KanaTransform.toKatakana(text) : text)
+            return
+        }
+        typingMetrics.recordKeystroke(at: Date())
+        if inputState.currentResult.isConverting { commitAndInsert() }
+        let result = inputState.input(kanaKeyID: keyID, direction: direction)
+        sessionLogger.log(type: "kana", data: ["kana": text, "composition": result.composition,
+                                             "candidates": "\(result.candidates.count)"])
+        syncInline(result)
+    }
+
     func keyboardDidInput(kana: String) {
         // 追加: 研究入力モード中は本文を researchDraft へ流し、proxy / inputState には一切触れない。
         if researchInputMode {
@@ -739,6 +779,7 @@ extension KeyboardViewController: KeyboardActionDelegate {
             return // 追加: 通常入力経路へ進ませない
         }
         typingMetrics.recordKeystroke(at: Date()) // 追加: 打鍵を集計（本文は渡さず時刻のみ）
+        if inputState.currentResult.isConverting { commitAndInsert() }
         let result = inputState.input(fixed: kana)
         NSLog("[MFK] keyboardDidInput kana='\(kana)' -> composition='\(result.composition)' candidates=\(result.candidates.count)") // 追加: 入力とcompositionのデバッグ
         // 追加: 入力かなと未確定よみ・候補数を記録。
@@ -796,6 +837,7 @@ extension KeyboardViewController: KeyboardActionDelegate {
     }
 
     func keyboardDidSelectCandidate(id: String) {
+        guard !researchInputMode, inputState.currentResult.candidates.contains(where: { $0.id == id }) else { return }
         // 候補選択 → その状態で確定して proxy へ挿入。
         let result = inputState.selectCandidate(id: id)
         // 追加: 選択された候補を記録。
@@ -870,8 +912,15 @@ extension KeyboardViewController: KeyboardActionDelegate {
     }
 
     func keyboardDidChangeInputMode(_ mode: InputMode) {
-        // KeyboardView 側で既にキー再構築済み。状態側の追随は現状不要。
-        sessionLogger.log(type: "inputMode", data: ["mode": "\(mode)"]) // 追加: 入力モード変更を記録
+        if !researchInputMode && !inputState.currentResult.composition.isEmpty { commitAndInsert() }
+        inputState.setInputMode(mode)
+        sessionLogger.log(type: "inputMode", data: ["mode": "\(mode)"])
+    }
+
+    func keyboardWillBeginCursorControl() -> Bool {
+        guard !researchInputMode else { return false }
+        if !inputState.currentResult.composition.isEmpty { commitAndInsert() }
+        return true
     }
 
     func keyboardDidTapNextKeyboard() {

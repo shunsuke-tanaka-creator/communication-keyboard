@@ -13,6 +13,7 @@
 
 #include <string>
 #include <vector>
+#include <limits>
 
 #ifdef MOZC_AVAILABLE
 // Mozc 実 API のヘッダ（ビルドフラグで MOZC_AVAILABLE が定義された場合のみ）。
@@ -60,6 +61,7 @@ static std::string StdStringFromNSString(NSString *s) {
 @implementation MozcEngineBridge {
     // スタブ用の内部状態。未確定よみを UTF-8 の std::string で保持する。
     std::string _composition;
+    BOOL _converting;
 #ifdef MOZC_AVAILABLE
     // 実 API では Mozc の IosEngine と直近の変換出力(Output)を保持する。
     std::unique_ptr<mozc::ios::IosEngine> _engine;
@@ -77,6 +79,7 @@ static std::string StdStringFromNSString(NSString *s) {
     self = [super init];
     if (self) {
         _composition.clear();
+        _converting = NO;
 #ifdef MOZC_AVAILABLE
         _engineReady = NO;
         @try {
@@ -84,9 +87,10 @@ static std::string StdStringFromNSString(NSString *s) {
             _engine = std::make_unique<mozc::ios::IosEngine>(path);
             // モバイル用リクエスト(12キー フリック)を設定し、モバイル設定を反映してセッション作成。
             mozc::commands::Command command;
-            _engine->SetMobileRequest("12KEYS", &command);
+            _engine->SetMobileRequest("QWERTY_JA", &command); // Swift resolves kana/flicks before sending text.
             mozc::config::Config config;
             mozc::ios::IosEngine::FillMobileConfig(&config);
+            config.set_suggestions_size(20);
             _engine->SetConfig(config, &command);
             if (_engine->CreateSession(&command)) {
                 _engineReady = YES;
@@ -105,7 +109,7 @@ static std::string StdStringFromNSString(NSString *s) {
 
 - (BOOL)isMozcAvailable {
 #ifdef MOZC_AVAILABLE
-    return YES;
+    return [self engineUsable];
 #else
     return NO;
 #endif
@@ -114,6 +118,7 @@ static std::string StdStringFromNSString(NSString *s) {
 - (void)reset {
     @try {
         _composition.clear();
+        _converting = NO;
 #ifdef MOZC_AVAILABLE
         if ([self engineUsable]) {
             mozc::commands::Command command;
@@ -126,8 +131,33 @@ static std::string StdStringFromNSString(NSString *s) {
     }
 }
 
+- (void)setAlphabetInput:(BOOL)alphabet {
+#ifdef MOZC_AVAILABLE
+    if ([self engineUsable]) {
+        _engine->SwitchInputMode(alphabet ? mozc::ios::IosEngine::InputMode::ALPHABET
+                                         : mozc::ios::IosEngine::InputMode::HIRAGANA);
+    }
+#endif
+}
+
+- (void)setLearningEnabled:(BOOL)enabled {
+#ifdef MOZC_AVAILABLE
+    if ([self engineUsable]) {
+        mozc::config::Config config;
+        mozc::ios::IosEngine::FillMobileConfig(&config);
+        config.set_suggestions_size(20);
+        config.set_incognito_mode(!enabled);
+        config.set_history_learning_level(enabled ? mozc::config::Config::DEFAULT_HISTORY
+                                                 : mozc::config::Config::NO_HISTORY);
+        mozc::commands::Command command;
+        _engine->SetConfig(config, &command);
+    }
+#endif
+}
+
 - (void)insertText:(NSString *)text {
     @try {
+        if (_converting) { [self cancelConversion]; }
         _composition += StdStringFromNSString(text);
 #ifdef MOZC_AVAILABLE
         if ([self engineUsable]) {
@@ -151,13 +181,11 @@ static std::string StdStringFromNSString(NSString *s) {
 
 - (void)deleteBackward {
     @try {
-        // UTF-8 末尾 1 コードポイントを削除する（継続バイト 10xxxxxx を読み飛ばす）。
-        if (!_composition.empty()) {
-            size_t i = _composition.size();
-            do {
-                --i;
-            } while (i > 0 && (static_cast<unsigned char>(_composition[i]) & 0xC0) == 0x80);
-            _composition.erase(i);
+        if (_converting) { [self cancelConversion]; }
+        NSString *reading = NSStringFromStdString(_composition);
+        if (reading.length > 0) {
+            NSRange last = [reading rangeOfComposedCharacterSequenceAtIndex:reading.length - 1];
+            _composition = StdStringFromNSString([reading substringToIndex:last.location]);
         }
 #ifdef MOZC_AVAILABLE
         if ([self engineUsable]) {
@@ -177,7 +205,13 @@ static std::string StdStringFromNSString(NSString *s) {
     @try {
 #ifdef MOZC_AVAILABLE
         if ([self engineUsable]) {
-            // モバイルは SendKey 応答に既にサジェストが載る。直近出力をそのまま返す。
+            if (_composition.empty()) { return [self resultFromLastOutput]; }
+            mozc::commands::Command command;
+            _engine->SendSpecialKey(mozc::commands::KeyEvent::SPACE, &command);
+            if (command.has_output()) {
+                _lastOutput = command.output();
+                _converting = _lastOutput.has_preedit();
+            }
             return [self resultFromLastOutput];
         }
 #endif
@@ -207,7 +241,20 @@ static std::string StdStringFromNSString(NSString *s) {
 #ifdef MOZC_AVAILABLE
         if ([self engineUsable]) {
             // 候補 ID は Output 由来の int を文字列化したもの。int へ戻して選択する。
-            int index = [candidateID intValue];
+            // Reject synthetic, malformed and stale IDs ("compo" must never become 0).
+            NSScanner *scanner = [NSScanner scannerWithString:candidateID];
+            long long parsed = 0;
+            scanner.charactersToBeSkipped = nil;
+            if (![scanner scanLongLong:&parsed] || !scanner.isAtEnd ||
+                parsed < std::numeric_limits<int>::min() || parsed > std::numeric_limits<int>::max()) {
+                return [self resultFromLastOutput];
+            }
+            BOOL found = NO;
+            for (NSDictionary *candidate in [self resultFromLastOutput][kMozcResultKeyCandidates]) {
+                if ([candidate[kMozcCandidateKeyID] isEqualToString:candidateID]) { found = YES; break; }
+            }
+            if (!found) { return [self resultFromLastOutput]; }
+            int index = (int)parsed;
             mozc::commands::Command command;
             _engine->SubmitCandidate(index, &command);
             if (command.has_output()) {
@@ -232,7 +279,15 @@ static std::string StdStringFromNSString(NSString *s) {
 - (NSDictionary<NSString *, id> *)moveFocusBy:(NSInteger)offset {
     @try {
 #ifdef MOZC_AVAILABLE
-        // TODO(main): フォーカス文節移動を Mozc へ通知する。
+        if ([self engineUsable] && _converting) {
+            mozc::commands::Command command;
+            for (NSInteger i = 0; i < labs(offset); ++i) {
+                _engine->SendSpecialKey(offset < 0 ? mozc::commands::KeyEvent::LEFT
+                                                  : mozc::commands::KeyEvent::RIGHT, &command);
+                if (command.has_output()) { _lastOutput = command.output(); }
+            }
+            return [self resultFromLastOutput];
+        }
 #endif
         return [self stubResultConverting:YES];
     } @catch (NSException *e) {
@@ -244,7 +299,7 @@ static std::string StdStringFromNSString(NSString *s) {
 - (NSDictionary<NSString *, id> *)resizeFocusedSegmentBy:(NSInteger)offset {
     @try {
 #ifdef MOZC_AVAILABLE
-        // TODO(main): 文節伸縮を Mozc へ通知する。
+        if ([self engineUsable]) { return [self resultFromLastOutput]; } // Boundary resizing is not exposed by this keyboard.
 #endif
         return [self stubResultConverting:YES];
     } @catch (NSException *e) {
@@ -257,16 +312,15 @@ static std::string StdStringFromNSString(NSString *s) {
     @try {
         NSString *committed = NSStringFromStdString(_composition);
         _composition.clear();
+        _converting = NO;
 #ifdef MOZC_AVAILABLE
         if ([self engineUsable]) {
-            // 追加: 直前の候補選択(SubmitCandidate)で既に result が確定している場合は
-            // それを確定文字列として使う。ここで再度 Submit すると空コンテキストへの
-            // 確定になり result が取れず、よみ(_composition)が返ってしまう不具合を防ぐ。
-            if (_lastOutput.has_result() && !_lastOutput.result().value().empty()) {
-                committed = NSStringFromStdString(_lastOutput.result().value());
-                NSLog(@"[MozcEngineBridge] commit use last result committed='%@'", committed); // 追加(デバッグ)
+            // A mobile prediction may commit only a prefix. Preserve that result
+            // and submit any remaining preedit instead of dropping the suffix.
+            NSString *prefix = _lastOutput.has_result() ? NSStringFromStdString(_lastOutput.result().value()) : @"";
+            if (prefix.length > 0 && (!_lastOutput.has_preedit() || _lastOutput.preedit().segment_size() == 0)) {
                 _lastOutput.Clear();
-                return committed;
+                return prefix;
             }
             // 確定コマンドを送り、result.value を確定文字列として取得する。
             mozc::commands::Command command;
@@ -274,7 +328,7 @@ static std::string StdStringFromNSString(NSString *s) {
             if (command.has_output()) {
                 _lastOutput = command.output();
                 if (_lastOutput.has_result()) {
-                    committed = NSStringFromStdString(_lastOutput.result().value());
+                    committed = [prefix stringByAppendingString:NSStringFromStdString(_lastOutput.result().value())];
                 }
             }
             // 追加(デバッグ): commit の Submit 後 result を確認する。
@@ -297,10 +351,12 @@ static std::string StdStringFromNSString(NSString *s) {
 #ifdef MOZC_AVAILABLE
         if ([self engineUsable]) {
             mozc::commands::Command command;
-            _engine->ResetContext(&command);
-            _composition.clear();
-            _lastOutput.Clear();
-            return [self emptyResult];
+            if (_converting) {
+                _engine->SendSpecialKey(mozc::commands::KeyEvent::ESCAPE, &command);
+                if (command.has_output()) { _lastOutput = command.output(); }
+            }
+            _converting = NO;
+            return [self resultFromLastOutput];
         }
 #endif
         // かな入力状態（変換前）へ戻す。
@@ -361,57 +417,64 @@ static std::string StdStringFromNSString(NSString *s) {
 - (NSDictionary<NSString *, id> *)resultFromLastOutput {
     const mozc::commands::Output &out = _lastOutput;
 
-    // preedit（未確定文字列）を組み立てる。
-    std::string composition;
-    if (out.has_preedit()) {
-        const mozc::commands::Preedit &preedit = out.preedit();
-        for (int i = 0; i < preedit.segment_size(); ++i) {
-            composition += preedit.segment(i).value();
-        }
+    const auto &preedit = out.preedit();
+    NSInteger focused = 0;
+    for (int i = 0; i < preedit.segment_size(); ++i) {
+        if (preedit.segment(i).annotation() == mozc::commands::Preedit::Segment::HIGHLIGHT) { focused = i; break; }
     }
-
-    // 候補列を組み立てる。
-    // 表示用候補は candidate_window に入る（予測/変換で埋まる）。
-    // all_candidate_words は全件だが特定状況でしか埋まらないためフォールバックに使う。
+    NSString *readingFallback = NSStringFromStdString(_composition);
+    if (_converting && preedit.segment_size() > focused && preedit.segment((int)focused).has_key()) {
+        readingFallback = NSStringFromStdString(preedit.segment((int)focused).key());
+    }
     NSMutableArray<NSDictionary *> *candidates = [NSMutableArray array];
-    NSString *readingFallback = NSStringFromStdString(composition);
-    if (out.has_candidate_window() && out.candidate_window().candidate_size() > 0) {
-        const mozc::commands::CandidateWindow &win = out.candidate_window();
-        for (int i = 0; i < win.candidate_size(); ++i) {
-            const mozc::commands::CandidateWindow::Candidate &c = win.candidate(i);
-            [candidates addObject:@{
-                kMozcCandidateKeyID: [NSString stringWithFormat:@"%d", c.id()],
-                kMozcCandidateKeyValue: NSStringFromStdString(c.value()),
-                kMozcCandidateKeyReading: readingFallback,  // candidate_window は key(よみ)を持たない
-                kMozcCandidateKeyDescription: [NSNull null],
-            }];
-        }
-    } else if (out.has_all_candidate_words()) {
-        const mozc::commands::CandidateList &list = out.all_candidate_words();
-        for (int i = 0; i < list.candidates_size(); ++i) {
-            const mozc::commands::CandidateWord &c = list.candidates(i);
-            NSString *reading = c.has_key() ? NSStringFromStdString(c.key()) : readingFallback;
-            [candidates addObject:@{
-                kMozcCandidateKeyID: [NSString stringWithFormat:@"%d", c.id()],
-                kMozcCandidateKeyValue: NSStringFromStdString(c.value()),
-                kMozcCandidateKeyReading: reading,
-                kMozcCandidateKeyDescription: [NSNull null],
-            }];
+    NSMutableSet<NSString *> *ids = [NSMutableSet set];
+    // Prefer the full list; the window can contain just the visible page.
+    for (const auto &c : out.all_candidate_words().candidates()) {
+        if (!c.has_id() || !c.has_value()) { continue; }
+        NSString *candidateID = [NSString stringWithFormat:@"%d", c.id()];
+        [ids addObject:candidateID];
+        [candidates addObject:@{
+            kMozcCandidateKeyID: candidateID,
+            kMozcCandidateKeyValue: NSStringFromStdString(c.value()),
+            kMozcCandidateKeyReading: c.has_key() ? NSStringFromStdString(c.key()) : readingFallback,
+            kMozcCandidateKeyDescription: NSStringFromStdString(c.annotation().description()),
+        }];
+    }
+    for (const auto &c : out.candidate_window().candidate()) {
+        NSString *candidateID = [NSString stringWithFormat:@"%d", c.id()];
+        if (!c.has_id() || [ids containsObject:candidateID]) { continue; }
+        [ids addObject:candidateID];
+        [candidates addObject:@{
+            kMozcCandidateKeyID: candidateID,
+            kMozcCandidateKeyValue: NSStringFromStdString(c.value()),
+            kMozcCandidateKeyReading: readingFallback,
+            kMozcCandidateKeyDescription: NSStringFromStdString(c.annotation().description()),
+        }];
+    }
+    NSMutableArray *segments = [NSMutableArray array];
+    if (_converting) {
+        for (int i = 0; i < preedit.segment_size(); ++i) {
+            const auto &segment = preedit.segment(i);
+            NSString *value = NSStringFromStdString(segment.value());
+            NSString *reading = segment.has_key() ? NSStringFromStdString(segment.key()) : value;
+            NSDictionary *selected = nil;
+            if (i == focused) {
+                for (NSDictionary *candidate in candidates) {
+                    if ([candidate[kMozcCandidateKeyValue] isEqualToString:value]) { selected = candidate; break; }
+                }
+            }
+            selected = selected ?: @{kMozcCandidateKeyID: [NSString stringWithFormat:@"segment:%d", i],
+                                     kMozcCandidateKeyValue: value, kMozcCandidateKeyReading: reading};
+            [segments addObject:@{kMozcSegmentKeyReading: reading, kMozcSegmentKeySelected: selected,
+                                 kMozcSegmentKeyCandidates: i == focused ? candidates : @[selected]}];
         }
     }
-
-    NSString *compositionStr = NSStringFromStdString(composition);
-    NSLog(@"[MozcEngineBridge] resultFromLastOutput composition='%@' candidates=%lu (window=%d all=%d)",
-          compositionStr, (unsigned long)candidates.count,
-          out.has_candidate_window() ? out.candidate_window().candidate_size() : 0,
-          out.has_all_candidate_words() ? out.all_candidate_words().candidates_size() : 0); // 追加: 候補件数のデバッグ
-
     return @{
-        kMozcResultKeyComposition: compositionStr,
+        kMozcResultKeyComposition: NSStringFromStdString(_composition),
         kMozcResultKeyCandidates: candidates,
-        kMozcResultKeySegments: @[],
-        kMozcResultKeyFocusedSegment: @(0),
-        kMozcResultKeyIsConverting: @(NO),
+        kMozcResultKeySegments: segments,
+        kMozcResultKeyFocusedSegment: @(focused),
+        kMozcResultKeyIsConverting: @(_converting),
     };
 }
 #endif

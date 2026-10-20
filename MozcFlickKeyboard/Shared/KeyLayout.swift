@@ -28,6 +28,8 @@ public enum KeyAction: Equatable, Sendable {
     case nextKeyboard
     /// 入力モード切替（ひらがな/カタカナ/英数/記号を循環）。
     case switchInputMode
+    case setInputMode(InputMode)
+    case nextCandidate
     /// カーソル左移動。
     case cursorLeft
     /// カーソル右移動。
@@ -104,19 +106,19 @@ public enum KeyLayout {
     public static func hiraganaLayout() -> [KeyDefinition] {
         return [
             // row0
-            KeyDefinition(label: "☆123", action: .switchInputMode, row: 0, column: 0),
+            KeyDefinition(label: "123", action: .setInputMode(.number), row: 0, column: 0),
             KeyDefinition(label: "あ", action: .kana(kanaKeyID: "あ"), row: 0, column: 1),
             KeyDefinition(label: "か", action: .kana(kanaKeyID: "か"), row: 0, column: 2),
             KeyDefinition(label: "さ", action: .kana(kanaKeyID: "さ"), row: 0, column: 3),
             KeyDefinition(label: "⌫", action: .backspace, row: 0, column: 4),
             // row1
-            KeyDefinition(label: "ABC", action: .switchInputMode, row: 1, column: 0),
+            KeyDefinition(label: "ABC", action: .setInputMode(.alphabet), row: 1, column: 0),
             KeyDefinition(label: "た", action: .kana(kanaKeyID: "た"), row: 1, column: 1),
             KeyDefinition(label: "な", action: .kana(kanaKeyID: "な"), row: 1, column: 2),
             KeyDefinition(label: "は", action: .kana(kanaKeyID: "は"), row: 1, column: 3),
             KeyDefinition(label: "空白", action: .space, row: 1, column: 4),
             // row2
-            KeyDefinition(label: "あいう", action: .switchInputMode, row: 2, column: 0),
+            KeyDefinition(label: "あいう", action: .setInputMode(.hiragana), row: 2, column: 0),
             KeyDefinition(label: "ま", action: .kana(kanaKeyID: "ま"), row: 2, column: 1),
             KeyDefinition(label: "や", action: .kana(kanaKeyID: "や"), row: 2, column: 2),
             KeyDefinition(label: "ら", action: .kana(kanaKeyID: "ら"), row: 2, column: 3),
@@ -126,7 +128,7 @@ public enum KeyLayout {
             KeyDefinition(label: "小゛゜", action: .toggleDakuten, row: 3, column: 1), // 変更: 「、。?!」と左右入れ替え
             KeyDefinition(label: "わ", action: .kana(kanaKeyID: "わ"), row: 3, column: 2),
             KeyDefinition(label: "、。?!", action: .kana(kanaKeyID: "、"), row: 3, column: 3), // 変更: 「小゛゜」と左右入れ替え
-            KeyDefinition(label: "次候補", action: .returnOrConfirm, row: 3, column: 4),
+            KeyDefinition(label: "次候補", action: .nextCandidate, row: 3, column: 4),
         ]
     }
 
@@ -136,15 +138,15 @@ public enum KeyLayout {
     private static func fixedLayout(modeLabel: String, characters: [String]) -> [KeyDefinition] {
         var keys: [KeyDefinition] = [
             // 左列: モード切替（循環）。iOS 標準に合わせ ☆123 / ABC / あいう を縦に並べる。
-            KeyDefinition(label: "☆123", action: .switchInputMode, row: 0, column: 0),
-            KeyDefinition(label: "ABC", action: .switchInputMode, row: 1, column: 0),
-            KeyDefinition(label: "あいう", action: .switchInputMode, row: 2, column: 0),
+            KeyDefinition(label: "123", action: .setInputMode(.number), row: 0, column: 0),
+            KeyDefinition(label: "ABC", action: .setInputMode(.alphabet), row: 1, column: 0),
+            KeyDefinition(label: "あいう", action: .setInputMode(.hiragana), row: 2, column: 0),
             KeyDefinition(label: "🌐", action: .nextKeyboard, row: 3, column: 0),
             // 右列: 削除 / 空白 / 改行(確定) / 次候補。
             KeyDefinition(label: "⌫", action: .backspace, row: 0, column: 4),
             KeyDefinition(label: "空白", action: .space, row: 1, column: 4),
             KeyDefinition(label: "改行", action: .returnOrConfirm, row: 2, column: 4),
-            KeyDefinition(label: "次候補", action: .returnOrConfirm, row: 3, column: 4),
+            KeyDefinition(label: "次候補", action: .nextCandidate, row: 3, column: 4),
         ]
         // 中央3列 × row0..3 に文字を並べる（最大12文字。row3 は col1,col2,col3）。
         let slots: [(Int, Int)] = [
@@ -163,7 +165,10 @@ public enum KeyLayout {
     /// カタカナはひらがなキー配列のラベルだけカタカナに置換（入力自体は KanaTransform で変換）。
     /// 実際の文字変換は InputState 側でモードを見て行うため、ここではひらがな配列を流用する。
     public static func katakanaLayout() -> [KeyDefinition] {
-        hiraganaLayout()
+        hiraganaLayout().map { key in
+            KeyDefinition(label: key.kanaKey == nil ? key.label : KanaTransform.toKatakana(key.label),
+                          action: key.action, row: key.row, column: key.column)
+        }
     }
 
     public static func alphabetLayout() -> [KeyDefinition] {
@@ -183,12 +188,23 @@ public enum KeyLayout {
 
     /// モードに応じたレイアウトを返す。
     public static func layout(for mode: InputMode) -> [KeyDefinition] {
+        let keys: [KeyDefinition]
         switch mode {
-        case .hiragana: return hiraganaLayout()
-        case .katakana: return katakanaLayout()
-        case .alphabet: return alphabetLayout()
-        case .number:   return numberLayout()
-        case .symbol:   return symbolLayout()
+        case .hiragana: keys = hiraganaLayout()
+        case .katakana: keys = katakanaLayout()
+        case .alphabet: keys = alphabetLayout()
+        case .number: keys = numberLayout()
+        case .symbol: keys = symbolLayout()
+        }
+        return keys.map { key in
+            guard key.column == 0 else { return key }
+            if key.row == 0 && mode == .number {
+                return KeyDefinition(label: "#+=", action: .setInputMode(.symbol), row: 0, column: 0)
+            }
+            if key.row == 2 && mode == .hiragana {
+                return KeyDefinition(label: "カナ", action: .setInputMode(.katakana), row: 2, column: 0)
+            }
+            return key
         }
     }
 

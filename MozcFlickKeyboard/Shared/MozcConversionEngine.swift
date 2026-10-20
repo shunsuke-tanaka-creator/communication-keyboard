@@ -40,6 +40,12 @@ public final class MozcConversionEngine: JapaneseConversionEngine {
 
     // MARK: - JapaneseConversionEngine
 
+    public func setInputMode(_ mode: InputMode) {
+        bridge.setAlphabetInput(mode == .alphabet || mode == .number || mode == .symbol)
+    }
+
+    public func setLearningEnabled(_ enabled: Bool) { bridge.setLearningEnabled(enabled) }
+
     public func reset() {
         bridge.reset()
     }

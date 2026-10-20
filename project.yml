@@ -144,6 +144,11 @@ targets:
     platform: iOS
     sources:
       - path: Tests
+      # Compile presentation/input orchestration into the test bundle for regression tests.
+      - path: MozcFlickKeyboard/Keyboard/InputState.swift
+      - path: MozcFlickKeyboard/Keyboard/Flick
+      - path: MozcFlickKeyboard/Keyboard/Candidates
+      - path: MozcFlickKeyboard/Keyboard/Narrative
     dependencies:
       - target: MozcFlickShared
     settings:

@@ -16,6 +16,8 @@ import MozcFlickShared // 追加: 共有フレームワークの型を利用
 public protocol KeyboardActionDelegate: AnyObject {
     /// かな1文字以上を未確定バッファへ追加してほしい。
     func keyboardDidInput(kana: String)
+    func keyboardDidInputKey(keyID: String, direction: FlickDirection)
+    func keyboardWillBeginCursorControl() -> Bool
     /// 追加: 押された生のキー操作（キーID・フリック方向）を通知（ログ記録用）。
     func keyboardDidPressKey(keyID: String, direction: String)
     /// 未確定末尾を1文字削除（未確定が空なら実テキストを削除）してほしい。
@@ -56,7 +58,7 @@ public final class InputState {
 
     /// トグル入力（同一キー連打でかな循環）ON/OFF。
     public var toggleInputEnabled = true
-    /// フリックのみ入力 ON/OFF（true ならタップ中央入力を無効化）。
+    /// フリックのみ入力 ON/OFF（中央タップは入力し、連打トグルだけ無効化）。
     public var flickOnlyEnabled = false
 
     /// エンジンが返す最新の変換状態。UI はこれを描画する。
@@ -66,9 +68,21 @@ public final class InputState {
     private var lastKanaKeyID: String?
     private var lastCycleIndex = 0
 
-    public init(engine: JapaneseConversionEngine) {
+    private let now: () -> TimeInterval
+    private var lastTapTime: TimeInterval = -.infinity
+
+    public init(engine: JapaneseConversionEngine, now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.engine = engine
+        self.now = now
     }
+
+    public func setInputMode(_ mode: InputMode) {
+        inputMode = mode
+        engine.setInputMode(mode)
+        lastKanaKeyID = nil
+    }
+
+    public func setLearningEnabled(_ enabled: Bool) { engine.setLearningEnabled(enabled) }
 
     // MARK: - 状態遷移
 
@@ -79,7 +93,7 @@ public final class InputState {
         guard let key = KanaTable.key(for: kanaKeyID) else { return currentResult }
 
         var kana: String
-        if direction == .center && toggleInputEnabled && lastKanaKeyID == kanaKeyID && !key.cycle.isEmpty {
+        if direction == .center && toggleInputEnabled && !flickOnlyEnabled && lastKanaKeyID == kanaKeyID && now() - lastTapTime < 0.8 && !key.cycle.isEmpty {
             // 同一キー中央タップ連打 → 循環（トグル入力）。直前の1文字を差し替える。
             lastCycleIndex = (lastCycleIndex + 1) % key.cycle.count
             kana = key.cycle[lastCycleIndex]
@@ -89,6 +103,8 @@ public final class InputState {
             lastKanaKeyID = (direction == .center) ? kanaKeyID : nil
             lastCycleIndex = 0
         }
+
+        lastTapTime = now()
 
         // カタカナモードなら入力かなをカタカナへ寄せる。
         if inputMode == .katakana {
@@ -175,8 +191,7 @@ public final class InputState {
     /// 入力モード切替（循環）。
     @discardableResult
     public func switchInputMode() -> InputMode {
-        inputMode = inputMode.next
-        lastKanaKeyID = nil
+        setInputMode(inputMode.next)
         return inputMode
     }
 

@@ -61,6 +61,9 @@ public struct ConversionResult: Equatable, Sendable {
 /// Mozc 実装（MozcConversionEngine）とローカルスタブ（LocalStubEngine）が準拠する。
 /// これにより Mozc のビルド完了前でもアプリ全体が動作・テスト可能。
 public protocol JapaneseConversionEngine: AnyObject {
+    func setInputMode(_ mode: InputMode)
+    func setLearningEnabled(_ enabled: Bool)
+
     /// 内部状態を破棄して初期状態へ戻す。
     func reset()
 
@@ -90,4 +93,9 @@ public protocol JapaneseConversionEngine: AnyObject {
 
     /// 変換を取り消し、かな入力状態へ戻す。
     func cancelConversion() -> ConversionResult
+}
+
+public extension JapaneseConversionEngine {
+    func setInputMode(_ mode: InputMode) {}
+    func setLearningEnabled(_ enabled: Bool) {}
 }

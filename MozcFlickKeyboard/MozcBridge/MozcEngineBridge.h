@@ -49,6 +49,8 @@ FOUNDATION_EXPORT NSString *const kMozcSegmentKeyCandidates;    // NSArray<NSDic
 
 /// 内部状態を初期化する。
 - (void)reset;
+- (void)setAlphabetInput:(BOOL)alphabet;
+- (void)setLearningEnabled:(BOOL)enabled;
 
 /// 未確定文字列末尾へかなを追加する。
 - (void)insertText:(NSString *)text;

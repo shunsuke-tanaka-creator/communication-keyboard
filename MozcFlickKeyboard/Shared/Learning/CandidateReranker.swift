@@ -38,11 +38,11 @@ public enum CandidateReranker {
     /// 3. score 降順で安定ソート（同点は元の順序維持）。
     public static func rerank(_ input: Input) -> [ConversionCandidate] {
         var merged = input.candidates
-        let existingValues = Set(merged.map { $0.value })
+        var existingValues = Set(merged.map { $0.value })
 
         // 1. ユーザー辞書項目のマージ（同よみ・有効のみ想定）。
         for entry in input.userDictEntries where entry.isEnabled {
-            if !existingValues.contains(entry.word) {
+            if existingValues.insert(entry.word).inserted {
                 merged.append(ConversionCandidate(
                     id: "userdict:\(entry.id.uuidString)",
                     value: entry.word,

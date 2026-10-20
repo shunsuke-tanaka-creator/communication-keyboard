@@ -78,11 +78,12 @@ public final class LearningStore {
 
     public init(fileManager: FileManager = .default,
                 directoryName: String = "Learning",
-                maxRecords: Int = 5000) throws {
+                maxRecords: Int = 5000,
+                baseURL: URL? = nil) throws {
         self.fileManager = fileManager
         self.maxRecords = maxRecords
 
-        guard let base = AppConfig.sharedContainerURL else {
+        guard let base = baseURL ?? AppConfig.sharedContainerURL else {
             throw LearningError.sharedContainerUnavailable
         }
         let dir = base.appendingPathComponent(directoryName, isDirectory: true)

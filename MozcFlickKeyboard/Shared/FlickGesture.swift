@@ -15,9 +15,9 @@ public struct FlickThresholds: Sendable {
     /// 距離がこれ以上なら速度に関わらずフリック確定。
     public var confirmDistance: CGFloat
 
-    public init(minDistance: CGFloat = 12,
+    public init(minDistance: CGFloat = 10,
                 minVelocity: CGFloat = 120,
-                confirmDistance: CGFloat = 30) {
+                confirmDistance: CGFloat = 18) {
         self.minDistance = minDistance
         self.minVelocity = minVelocity
         self.confirmDistance = confirmDistance
@@ -39,13 +39,25 @@ public enum FlickGesture {
     /// - Returns: 中央(タップ)なら .center、方向確定ならその方向。
     public static func direction(translation: CGPoint,
                                  velocity: CGPoint = .zero,
-                                 thresholds: FlickThresholds = .standard) -> FlickDirection {
+                                 thresholds: FlickThresholds = .standard,
+                                 previousDirection: FlickDirection = .center) -> FlickDirection {
         let distance = hypot(translation.x, translation.y)
         let speed = hypot(velocity.x, velocity.y)
 
-        // 誤フリック抑制: 距離が短く速度も遅ければタップ扱い。
-        let isFlick = distance >= thresholds.confirmDistance
-            || (distance >= thresholds.minDistance && speed >= thresholds.minVelocity)
+        // A short deliberate stroke works even when a slow touch has no velocity.
+        // Ignore high velocity for tiny (< 6pt) jitter. Once selected, keep the
+        // direction until the finger returns near the origin or crosses a clear axis.
+        if previousDirection != .center && distance >= thresholds.minDistance * 0.5 {
+            switch previousDirection {
+            case .left where translation.x < 0, .right where translation.x > 0:
+                if abs(translation.y) < abs(translation.x) * 1.25 { return previousDirection }
+            case .up where translation.y < 0, .down where translation.y > 0:
+                if abs(translation.x) < abs(translation.y) * 1.25 { return previousDirection }
+            default: break
+            }
+        }
+        let isFlick = distance >= thresholds.minDistance || distance >= thresholds.confirmDistance
+            || (distance >= 6 && speed >= thresholds.minVelocity)
         guard isFlick else { return .center }
 
         // 角度で 4 方向へ量子化（上下左右）。画面座標は y が下方向に増加する点に注意。
@@ -85,5 +97,18 @@ public enum FlickResolver {
         return FlickGesture.direction(translation: CGPoint(x: dx, y: dy),
                                       velocity: CGPoint(x: vx, y: vy),
                                       thresholds: thresholds)
+    }
+}
+
+/// Accumulates small drag movements without losing the remainder or jumping on reversal.
+public struct CursorDragState {
+    private var remainder: CGFloat = 0
+    public var pointsPerCharacter: CGFloat = 10
+    public init() {}
+    public mutating func move(by delta: CGFloat) -> Int {
+        remainder += delta
+        let steps = Int(remainder / max(pointsPerCharacter, 1))
+        remainder -= CGFloat(steps) * max(pointsPerCharacter, 1)
+        return steps
     }
 }

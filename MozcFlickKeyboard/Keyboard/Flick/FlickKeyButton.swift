@@ -23,6 +23,8 @@ protocol FlickKeyButtonDelegate: AnyObject {
     func flickKeyButton(_ button: FlickKeyButton, didActivate direction: FlickDirection)
     /// 長押しが継続中（連続削除などのため）。開始からの経過で加速判定に使う。
     func flickKeyButtonDidRepeat(_ button: FlickKeyButton)
+    func flickKeyButtonWillBeginCursorControl(_ button: FlickKeyButton) -> Bool
+    func flickKeyButton(_ button: FlickKeyButton, didMoveCursorBy offset: Int)
 }
 
 final class FlickKeyButton: UIControl {
@@ -40,6 +42,22 @@ final class FlickKeyButton: UIControl {
 
     /// 長押しで連続リピートするキーか（バックスペース等）。
     var isRepeatable = false
+    var displaysKatakana = false {
+        didSet { guideView.configure(with: keyDefinition.kanaKey, katakana: displaysKatakana) }
+    }
+    private var previousPoint = CGPoint.zero
+    private var previousTimestamp: TimeInterval = 0
+    private var cursorTimer: Timer?
+    private var cursorGestureConsumed = false
+    private var cursorControlAllowed = false
+    private var cursorDrag = CursorDragState()
+
+    private var isSpaceKey: Bool { keyDefinition.action == .space }
+
+    func setDisplayTitle(_ title: String) {
+        titleLabel.text = title
+        accessibilityLabel = title
+    }
 
     // MARK: - 内部状態
 
@@ -104,7 +122,7 @@ final class FlickKeyButton: UIControl {
         titleLabel.textColor = foreground
         symbolView.tintColor = foreground
         layer.borderColor = KeyboardAppearance.border.resolvedColor(with: traitCollection).cgColor
-        layer.shadowOpacity = touchIsActive ? 0 : (traitCollection.userInterfaceStyle == .dark ? 0.22 : 0.10)
+        layer.shadowOpacity = touchIsActive ? 0 : (traitCollection.userInterfaceStyle == .dark ? 0.12 : 0.04)
     }
 
     override func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
@@ -130,22 +148,20 @@ final class FlickKeyButton: UIControl {
     }
 
     private func setup() {
-        layer.cornerRadius = 10
+        layer.cornerRadius = 7
         layer.cornerCurve = .continuous
-        layer.borderWidth = 0.5
+        layer.borderWidth = 0.25
         layer.shadowColor = UIColor.black.cgColor
         layer.shadowOffset = CGSize(width: 0, height: 1)
-        layer.shadowRadius = 1.5
+        layer.shadowRadius = 0.8
         layer.masksToBounds = false
 
-        addSubview(guideView)
         addSubview(titleLabel)
         addSubview(popupLabel)
         symbolView.contentMode = .scaleAspectFit
         symbolView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)
         symbolView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(symbolView)
-        guideView.translatesAutoresizingMaskIntoConstraints = false
 
         titleLabel.text = keyDefinition.label
         let size: CGFloat = isCharacterKey && keyDefinition.label.count == 1 ? 23 : 14
@@ -171,10 +187,6 @@ final class FlickKeyButton: UIControl {
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -4),
             titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            guideView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            guideView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            guideView.topAnchor.constraint(equalTo: topAnchor),
-            guideView.bottomAnchor.constraint(equalTo: bottomAnchor),
             popupLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             popupLabel.bottomAnchor.constraint(equalTo: topAnchor, constant: -4),
             popupLabel.widthAnchor.constraint(equalTo: widthAnchor),
@@ -199,9 +211,20 @@ final class FlickKeyButton: UIControl {
         layer.zPosition = 10
         superview?.layer.zPosition = 10
         startPoint = touch.location(in: self)
+        previousPoint = startPoint
+        previousTimestamp = touch.timestamp
+        cursorGestureConsumed = false
+        cursorControlAllowed = false
+        cursorDrag = CursorDragState()
+        cursorTimer?.invalidate()
+        if isSpaceKey {
+            cursorTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: false) { [weak self] _ in
+                self?.beginCursorControl()
+            }
+        }
         currentDirection = .center
         showPopup(for: .center)
-        guideView.setActive(true)
+        if keyDefinition.kanaKey != nil { presentGuide() }
         startRepeatIfNeeded()
         return true
     }
@@ -209,8 +232,24 @@ final class FlickKeyButton: UIControl {
     override func continueTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
         let point = touch.location(in: self)
         let translation = CGPoint(x: point.x - startPoint.x, y: point.y - startPoint.y)
-        // フリックのみモードでも方向表示は行う。中央は flickOnly 制御を上位で行う。
-        let dir = FlickGesture.direction(translation: translation, thresholds: thresholds)
+        let elapsed = max(touch.timestamp - previousTimestamp, 0.001)
+        let delta = CGPoint(x: point.x - previousPoint.x, y: point.y - previousPoint.y)
+        previousPoint = point
+        previousTimestamp = touch.timestamp
+        if isSpaceKey {
+            if !cursorGestureConsumed && abs(translation.x) >= 12 && abs(translation.x) > abs(translation.y) {
+                beginCursorControl()
+                return true // Anchor here so activation does not jump the cursor.
+            }
+            if cursorControlAllowed {
+                let offset = cursorDrag.move(by: delta.x)
+                if offset != 0 { delegate?.flickKeyButton(self, didMoveCursorBy: offset) }
+            }
+            return true
+        }
+        let velocity = CGPoint(x: delta.x / elapsed, y: delta.y / elapsed)
+        let dir = FlickGesture.direction(translation: translation, velocity: velocity,
+            thresholds: thresholds, previousDirection: currentDirection)
         if dir != currentDirection {
             currentDirection = dir
             showPopup(for: dir)
@@ -221,6 +260,7 @@ final class FlickKeyButton: UIControl {
     }
 
     override func endTracking(_ touch: UITouch?, with event: UIEvent?) {
+        if let touch { _ = continueTracking(touch, with: event) }
         finishTouch(activate: true)
     }
 
@@ -233,26 +273,54 @@ final class FlickKeyButton: UIControl {
         updateAppearance()
         layer.zPosition = 0
         superview?.layer.zPosition = 0
+        cursorTimer?.invalidate()
+        cursorTimer = nil
         hidePopup()
         guideView.setActive(false)
+        guideView.removeFromSuperview()
         stopRepeat()
         NSLog("[MFK] finishTouch label='\(keyDefinition.label)' activate=\(activate) dir=\(currentDirection)") // 追加: タッチ確定のデバッグ
-        if activate {
+        if activate && !cursorGestureConsumed && repeatCount == 0 {
             fireHaptic(.impact)
             delegate?.flickKeyButton(self, didActivate: currentDirection)
         }
         currentDirection = .center
+        cursorGestureConsumed = false
+        cursorControlAllowed = false
+    }
+
+    private func beginCursorControl() {
+        guard touchIsActive, isSpaceKey, !cursorGestureConsumed else { return }
+        cursorTimer?.invalidate()
+        cursorGestureConsumed = true
+        cursorControlAllowed = delegate?.flickKeyButtonWillBeginCursorControl(self) ?? false
+        if cursorControlAllowed {
+            popupLabel.text = "↔"
+            popupLabel.isHidden = false
+            fireHaptic(.selection)
+        }
+    }
+
+    private func presentGuide() {
+        var host: UIView? = superview
+        while let view = host, !(view is KeyboardView) { host = view.superview }
+        guard let host else { return }
+        let rect = convert(bounds, to: host)
+        let width = min(170, host.bounds.width - 8)
+        guideView.frame = CGRect(x: min(max(4, rect.midX - width / 2), host.bounds.width - width - 4),
+                                 y: max(2, rect.minY - 46), width: width, height: 42)
+        host.addSubview(guideView)
+        guideView.setActive(true)
+        guideView.highlight(.center)
     }
 
     // MARK: - ポップアップ
 
     private func showPopup(for direction: FlickDirection) {
-        let text: String?
-        if let kana = keyDefinition.kanaKey {
-            text = kana.character(for: direction)
-        } else {
-            text = (direction == .center) ? keyDefinition.label : nil
-        }
+        // Kana use a floating five-direction guide above the finger.
+        if keyDefinition.kanaKey != nil { popupLabel.isHidden = true; return }
+        guard isCharacterKey else { popupLabel.isHidden = true; return }
+        let text = (direction == .center) ? titleLabel.text : nil
         guard let t = text else { popupLabel.isHidden = true; return }
         popupLabel.text = t
         popupLabel.isHidden = false
@@ -305,75 +373,54 @@ final class FlickKeyButton: UIControl {
     }
 }
 
-/// フリックガイド（キー背景に上下左右の候補文字を薄く表示する）。
+/// Floating directional hints fit inside the extension, above the touched key.
 final class FlickGuideView: UIView {
-
-    private var directionLabels: [FlickDirection: UILabel] = [:]
+    private let directions: [FlickDirection] = [.left, .up, .center, .down, .right]
+    private var labels: [FlickDirection: UILabel] = [:]
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = false
-        for dir in FlickDirection.allCases where dir != .center {
-            let l = UILabel()
-            l.textAlignment = .center
-            l.font = UIFont.systemFont(ofSize: 12)
-            l.textColor = KeyboardAppearance.secondaryInk
-            l.translatesAutoresizingMaskIntoConstraints = false
-            l.isHidden = true
-            addSubview(l)
-            directionLabels[dir] = l
-            NSLayoutConstraint.activate(constraints(for: dir, label: l))
+        backgroundColor = KeyboardAppearance.surface
+        layer.cornerRadius = 9
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.15
+        layer.shadowRadius = 3
+        layer.shadowOffset = CGSize(width: 0, height: 1)
+        for direction in directions {
+            let label = UILabel()
+            label.textAlignment = .center
+            label.numberOfLines = 2
+            label.layer.cornerRadius = 6
+            label.clipsToBounds = true
+            addSubview(label)
+            labels[direction] = label
         }
     }
-
     required init?(coder: NSCoder) { return nil }
-
-    private func constraints(for dir: FlickDirection, label l: UILabel) -> [NSLayoutConstraint] {
-        switch dir {
-        case .left:
-            return [l.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
-                    l.centerYAnchor.constraint(equalTo: centerYAnchor)]
-        case .right:
-            return [l.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
-                    l.centerYAnchor.constraint(equalTo: centerYAnchor)]
-        case .up:
-            return [l.topAnchor.constraint(equalTo: topAnchor, constant: 2),
-                    l.centerXAnchor.constraint(equalTo: centerXAnchor)]
-        case .down:
-            return [l.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
-                    l.centerXAnchor.constraint(equalTo: centerXAnchor)]
-        case .center:
-            return []
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let width = (bounds.width - 8) / 5
+        for (index, direction) in directions.enumerated() {
+            labels[direction]?.frame = CGRect(x: 4 + CGFloat(index) * width, y: 3, width: width - 2, height: bounds.height - 6)
         }
     }
-
-    /// かなキーの方向文字をガイドへ設定。
-    func configure(with kanaKey: KanaKey?) {
-        for dir in FlickDirection.allCases where dir != .center {
-            directionLabels[dir]?.text = kanaKey?.character(for: dir)
+    func configure(with key: KanaKey?, katakana: Bool = false) {
+        let arrows: [FlickDirection: String] = [.left: "←", .up: "↑", .center: "•", .down: "↓", .right: "→"]
+        for direction in directions {
+            let character = key?.character(for: direction) ?? ""
+            let text = NSMutableAttributedString(string: (arrows[direction] ?? "") + "\n",
+                attributes: [.font: UIFont.systemFont(ofSize: 9, weight: .medium)])
+            text.append(NSAttributedString(string: katakana ? KanaTransform.toKatakana(character) : character,
+                attributes: [.font: UIFont.systemFont(ofSize: 18, weight: .medium)]))
+            labels[direction]?.attributedText = text
         }
     }
-
-    /// ガイド表示のON/OFF（指を置いた時のみ表示）。
-    func setActive(_ active: Bool) {
-        for (_, l) in directionLabels {
-            l.isHidden = !active || (l.text?.isEmpty ?? true)
-        }
-        if !active { resetHighlight() }
-    }
-
-    /// 現在の方向を強調。
+    func setActive(_ active: Bool) { isHidden = !active }
     func highlight(_ direction: FlickDirection) {
-        for (dir, l) in directionLabels {
-            l.textColor = (dir == direction) ? KeyboardAppearance.accent : KeyboardAppearance.secondaryInk
-            l.font = .systemFont(ofSize: 12, weight: dir == direction ? .bold : .regular)
-        }
-    }
-
-    private func resetHighlight() {
-        for (_, l) in directionLabels {
-            l.textColor = KeyboardAppearance.secondaryInk
-            l.font = .systemFont(ofSize: 12)
+        for (key, label) in labels {
+            label.backgroundColor = key == direction ? KeyboardAppearance.accentFill : .clear
+            label.textColor = key == direction ? .white : KeyboardAppearance.ink
         }
     }
 }

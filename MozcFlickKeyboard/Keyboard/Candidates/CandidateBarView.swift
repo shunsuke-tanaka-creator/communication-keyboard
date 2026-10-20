@@ -85,14 +85,22 @@ final class CandidateBarView: UIView {
     }
 
     /// 候補を設定して再描画する。focused で強調する候補IDを指定できる。
-    func setCandidates(_ candidates: [ConversionCandidate], focused: String?) {
+    func setExpanded(_ expanded: Bool) {
+        expandButton.setImage(UIImage(systemName: expanded ? "chevron.up" : "chevron.down"), for: .normal)
+        expandButton.accessibilityLabel = expanded ? "候補一覧を閉じる" : "候補一覧を開く"
+    }
+
+    func setCandidates(_ candidates: [ConversionCandidate], focused: String?, resetScroll: Bool = true) {
+        let changed = self.candidates != candidates || focusedID != focused
         self.candidates = candidates
         self.focusedID = focused
         expandButton.isHidden = candidates.count <= 1
+        guard changed || resetScroll else { return }
+        let offset = collectionView.contentOffset
         collectionView.reloadData()
-        if !candidates.isEmpty {
-            collectionView.setContentOffset(.zero, animated: false)
-        }
+        collectionView.layoutIfNeeded()
+        let maximum = max(0, collectionView.contentSize.width - collectionView.bounds.width)
+        collectionView.setContentOffset(resetScroll ? .zero : CGPoint(x: min(max(0, offset.x), maximum), y: 0), animated: false)
     }
 
     @objc private func handleExpand() {
@@ -118,6 +126,7 @@ extension CandidateBarView: UICollectionViewDataSource, UICollectionViewDelegate
     }
 
     func collectionView(_ collectionView: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+        guard candidates.indices.contains(indexPath.item) else { return }
         let candidate = candidates[indexPath.item]
         // 候補選択の触覚フィードバック。
         if hapticsEnabled { UISelectionFeedbackGenerator().selectionChanged() }
@@ -143,12 +152,12 @@ final class CandidateCell: UICollectionViewCell {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        contentView.layer.cornerRadius = 9
+        contentView.layer.cornerRadius = 6
         contentView.layer.cornerCurve = .continuous
         contentView.addSubview(label)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 12),
-            label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -12),
+            label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 10),
+            label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -10),
             label.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 4),
             label.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -4),
             // 長すぎる候補の最大幅（省略のため）。
@@ -167,7 +176,7 @@ final class CandidateCell: UICollectionViewCell {
     }
 
     private func updateAppearance() {
-        contentView.backgroundColor = isCandidateFocused || isHighlighted ? KeyboardAppearance.accentSoft : KeyboardAppearance.key
+        contentView.backgroundColor = isCandidateFocused || isHighlighted ? KeyboardAppearance.accentSoft : .clear
         label.textColor = isCandidateFocused || isHighlighted ? KeyboardAppearance.accent : KeyboardAppearance.ink
     }
 

@@ -69,7 +69,7 @@ final class KeyboardView: UIView {
 
     /// トグル入力 ON/OFF。
     var toggleInputEnabled = true
-    /// フリックのみ入力 ON/OFF（true なら中央タップ入力を無効化）。
+    /// フリックのみ入力 ON/OFF（中央タップは入力し、連打トグルを無効化）。
     var flickOnlyEnabled = false
     /// 触覚フィードバック ON/OFF。
     var hapticsEnabled = true {
@@ -123,27 +123,12 @@ final class KeyboardView: UIView {
         return b
     }()
 
-    /// 追加: 手動イベント記録ボタン。押下で onRecordTap を呼び、バナーに手動イベント4ボタンを展開する。
-    private let recordButton: UIButton = {
-        let b = UIButton(type: .system)
-        b.setTitle("記録", for: .normal)
-        b.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
-        b.setContentHuggingPriority(.required, for: .horizontal)
-        return b
-    }()
+    /// 追加: 最下層に表示する情報バー（文言ラベル + チェックボタン + 記録・情報メニュー）。入力欄には書かず表示のみ。
+    private let toolsButton = UIButton(type: .system)
+    private var displayedResult = ConversionResult.empty
 
-    /// 追加: 情報ボタン。押下で onInfoTap を呼び、バナーに活動量サマリー（HealthKit）を展開する。
-    private let infoButton: UIButton = {
-        let b = UIButton(type: .system)
-        b.setTitle("情報", for: .normal)
-        b.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
-        b.setContentHuggingPriority(.required, for: .horizontal)
-        return b
-    }()
-
-    /// 追加: 最下層に表示する情報バー（文言ラベル + 記録ボタン + チェックボタン）。入力欄には書かず表示のみ。
     private lazy var infoBar: UIStackView = {
-        let s = UIStackView(arrangedSubviews: [infoLabel, recordButton, infoButton, checkButton])
+        let s = UIStackView(arrangedSubviews: [infoLabel, checkButton, toolsButton])
         s.axis = .horizontal
         s.spacing = 8
         s.alignment = .center
@@ -203,9 +188,17 @@ final class KeyboardView: UIView {
         translatesAutoresizingMaskIntoConstraints = false
         backgroundColor = KeyboardAppearance.canvas
         tintColor = KeyboardAppearance.accent
-        KeyboardAppearance.styleButton(recordButton, title: "記録", symbol: "square.and.pencil", compact: true)
-        KeyboardAppearance.styleButton(infoButton, title: "情報", symbol: "info.circle", compact: true)
         KeyboardAppearance.styleButton(checkButton, title: "チェック", prominent: true, compact: true)
+
+        toolsButton.setImage(UIImage(systemName: "ellipsis.circle"), for: .normal)
+        toolsButton.accessibilityLabel = "記録・情報"
+        toolsButton.showsMenuAsPrimaryAction = true
+        toolsButton.menu = UIMenu(children: [
+            UIAction(title: "記録", image: UIImage(systemName: "square.and.pencil")) { [weak self] _ in self?.onRecordTap?() },
+            UIAction(title: "情報", image: UIImage(systemName: "info.circle")) { [weak self] _ in self?.onInfoTap?() }
+        ])
+        toolsButton.widthAnchor.constraint(equalToConstant: 44).isActive = true
+        toolsButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
 
         candidateBar.translatesAutoresizingMaskIntoConstraints = false
         candidateList.translatesAutoresizingMaskIntoConstraints = false
@@ -222,8 +215,6 @@ final class KeyboardView: UIView {
         addSubview(candidateList)
 
         checkButton.addTarget(self, action: #selector(checkButtonTapped), for: .touchUpInside) // 追加
-        recordButton.addTarget(self, action: #selector(recordButtonTapped), for: .touchUpInside) // 追加:「記録」ボタン配線
-        infoButton.addTarget(self, action: #selector(infoButtonTapped), for: .touchUpInside) // 追加:「情報」ボタン配線
 
         // 追加: バナーのコールバックを透過プロパティへ中継する（proxy へは一切繋がない）。
         questionBanner.onSelectOption = { [weak self] option in self?.onQuestionOption?(option) }
@@ -238,8 +229,10 @@ final class KeyboardView: UIView {
             self?.actionDelegate?.keyboardDidSelectCandidate(id: candidate.id)
         }
         candidateBar.onExpand = { [weak self] in
-            self?.setCandidateListVisible(true)
+            guard let self else { return }
+            self.setCandidateListVisible(self.candidateList.isHidden)
         }
+        candidateList.onClose = { [weak self] in self?.setCandidateListVisible(false) }
         candidateList.onSelect = { [weak self] candidate in
             self?.setCandidateListVisible(false)
             self?.actionDelegate?.keyboardDidSelectCandidate(id: candidate.id)
@@ -279,11 +272,11 @@ final class KeyboardView: UIView {
             // 変更: rootStack の下端を親からではなく infoBar の上に付け替える。
             rootStack.bottomAnchor.constraint(equalTo: infoBar.topAnchor, constant: -3),
 
-            // 追加: 情報バーを最下層に固定（高さ 36pt。チェックボタンを収めるため拡大）。
+            // 追加: 情報バーを最下層に固定（高さ 32pt。予定・チェックと記録メニューを表示）。
             infoBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             infoBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             infoBar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
-            infoBar.heightAnchor.constraint(equalToConstant: 36),
+            infoBar.heightAnchor.constraint(equalToConstant: 32),
         ])
 
         rebuildKeys()
@@ -294,19 +287,28 @@ final class KeyboardView: UIView {
     /// エンジンからの ConversionResult を受けて候補バー/一覧を再描画する。
     func update(with result: ConversionResult) {
         NSLog("[MFK] KeyboardView.update composition='\(result.composition)' candidates=\(result.candidates.count) converting=\(result.isConverting)") // 追加: 表示更新のデバッグ
-        // 追加: 未確定よみ(composition)がある間は、打った文字そのものを候補バー先頭に表示する。
-        // これが無いと辞書にヒットしない読みで候補が0件になり画面に何も出ない。選択で composition を確定する。
-        var barCandidates = result.candidates
-        if !result.composition.isEmpty && !result.isConverting {
-            let compo = ConversionCandidate(id: "compo", value: result.composition, reading: result.composition)
-            if barCandidates.first?.value != result.composition {
-                barCandidates.insert(compo, at: 0)
+        let readingChanged = displayedResult.composition != result.composition
+        displayedResult = result
+        let focused = result.isConverting && result.segments.indices.contains(result.focusedSegment)
+            ? result.segments[result.focusedSegment].selected.id : result.candidates.first?.id
+        candidateBar.setCandidates(result.candidates, focused: focused, resetScroll: readingChanged)
+        candidateList.setCandidates(result.candidates, focused: focused, resetScroll: readingChanged)
+        updateKeyLabels()
+        if result.candidates.isEmpty { setCandidateListVisible(false) }
+    }
+
+    private func updateKeyLabels() {
+        for button in keyButtons {
+            switch button.keyDefinition.action {
+            case .space:
+                button.setDisplayTitle(displayedResult.composition.isEmpty ? "空白" : "変換")
+            case .returnOrConfirm:
+                button.setDisplayTitle(displayedResult.composition.isEmpty ? "改行" : "確定")
+            case .nextCandidate:
+                button.isEnabled = !displayedResult.composition.isEmpty
+                button.alpha = button.isEnabled ? 1 : 0.4
+            default: break
             }
-        }
-        candidateBar.setCandidates(barCandidates, focused: nil)
-        candidateList.setCandidates(barCandidates)
-        if barCandidates.isEmpty {
-            setCandidateListVisible(false)
         }
     }
 
@@ -327,6 +329,7 @@ final class KeyboardView: UIView {
     /// 候補一覧の表示切替。
     func setCandidateListVisible(_ visible: Bool) {
         candidateList.isHidden = !visible
+        candidateBar.setExpanded(visible)
     }
 
     /// 追加: 最下層の情報バーに文言を設定する（表示のみ）。
@@ -353,17 +356,7 @@ final class KeyboardView: UIView {
     }
 
     /// 追加:「記録」ボタン押下。手動イベントバナーを開く指示を controller へ送る。
-    @objc private func recordButtonTapped() {
-        onRecordTap?()
-    }
-
     /// 追加:「情報」ボタン押下。Info ページを開く指示を controller へ送る。
-    @objc private func infoButtonTapped() {
-        onInfoTap?()
-    }
-
-    // MARK: - 公開 API（お天気分バナー）
-
     /// 変更: 質問をバナーに表示する。フル画面モードでキーボード全体を占有する（キー・候補バーを隠す）。
     func showQuestion(_ pending: PendingQuestion) {
         questionBanner.showQuestion(pending) // 追加: 内容を構築
@@ -450,20 +443,34 @@ final class KeyboardView: UIView {
         for row in 0..<KeyLayout.rowCount {
             let rowStack = UIStackView()
             rowStack.axis = .horizontal
-            rowStack.distribution = .fillEqually
+            rowStack.distribution = .fill
             rowStack.spacing = 6
 
-            let rowKeys = layout.filter { $0.row == row }.sorted { $0.column < $1.column }
-            for def in rowKeys {
-                let button = FlickKeyButton(keyDefinition: def)
-                button.delegate = self
-                button.hapticsEnabled = hapticsEnabled
-                if case .backspace = def.action { button.isRepeatable = true }
-                keyButtons.append(button)
-                rowStack.addArrangedSubview(button)
+            let rowKeys = layout.filter { $0.row == row }
+            var cells: [UIView] = []
+            for column in 0..<KeyLayout.columnCount {
+                if let def = rowKeys.first(where: { $0.column == column }) {
+                    let button = FlickKeyButton(keyDefinition: def)
+                    button.delegate = self
+                    button.hapticsEnabled = hapticsEnabled
+                    button.displaysKatakana = inputMode == .katakana
+                    if case .backspace = def.action { button.isRepeatable = true }
+                    keyButtons.append(button)
+                    cells.append(button)
+                } else {
+                    let spacer = UIView()
+                    spacer.isUserInteractionEnabled = false
+                    cells.append(spacer)
+                }
+                rowStack.addArrangedSubview(cells[column])
+            }
+            for column in 0..<cells.count where column != 1 {
+                cells[column].widthAnchor.constraint(equalTo: cells[1].widthAnchor,
+                    multiplier: column == 0 || column == 4 ? 0.82 : 1).isActive = true
             }
             rootStack.addArrangedSubview(rowStack)
         }
+        updateKeyLabels()
     }
 
     private func applyHapticsSetting() {
@@ -480,8 +487,6 @@ final class KeyboardView: UIView {
         NSLog("[MFK] handle action=\(def.action) dir=\(direction)") // 追加: キー押下→アクション解釈のデバッグ
         switch def.action {
         case let .kana(id):
-            // フリックのみモードで中央タップは無視。
-            if flickOnlyEnabled && direction == .center { return }
             emitKana(kanaKeyID: id, direction: direction)
 
         case let .input(text):
@@ -507,6 +512,13 @@ final class KeyboardView: UIView {
             setInputMode(newMode)
             actionDelegate?.keyboardDidChangeInputMode(newMode)
 
+        case let .setInputMode(mode):
+            setInputMode(mode)
+            actionDelegate?.keyboardDidChangeInputMode(mode)
+
+        case .nextCandidate:
+            actionDelegate?.keyboardDidRequestConversion()
+
         case .cursorLeft:
             actionDelegate?.keyboardDidMoveCursor(by: -1)
 
@@ -527,7 +539,7 @@ final class KeyboardView: UIView {
         }
         NSLog("[MFK] emitKana id='\(kanaKeyID)' dir=\(direction) -> kana='\(kana)'") // 追加: かな解決結果のデバッグ
         actionDelegate?.keyboardDidPressKey(keyID: kanaKeyID, direction: "\(direction)") // 追加: 生キー操作を通知（ログ用）
-        actionDelegate?.keyboardDidInput(kana: kana)
+        actionDelegate?.keyboardDidInputKey(keyID: kanaKeyID, direction: direction)
     }
 }
 
@@ -537,6 +549,14 @@ extension KeyboardView: FlickKeyButtonDelegate {
 
     func flickKeyButton(_ button: FlickKeyButton, didActivate direction: FlickDirection) {
         handle(button.keyDefinition, direction: direction)
+    }
+
+    func flickKeyButtonWillBeginCursorControl(_ button: FlickKeyButton) -> Bool {
+        actionDelegate?.keyboardWillBeginCursorControl() ?? false
+    }
+
+    func flickKeyButton(_ button: FlickKeyButton, didMoveCursorBy offset: Int) {
+        actionDelegate?.keyboardDidMoveCursor(by: offset)
     }
 
     func flickKeyButtonDidRepeat(_ button: FlickKeyButton) {

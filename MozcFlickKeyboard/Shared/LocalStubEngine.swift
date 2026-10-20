@@ -15,6 +15,15 @@ public final class LocalStubEngine: JapaneseConversionEngine {
     /// 約50語の最小辞書。実運用では Mozc が担当するが、ここでは実演用。
     private static let dictionary: [String: [String]] = [
         "きょう": ["今日", "京"],
+        "いま": ["今"],
+        "へんかん": ["変換"],
+        "とうきょうと": ["東京都"],
+        "にほんご": ["日本語"],
+        "かんじ": ["漢字"],
+        "ひゃく": ["百", "100"],
+        "きょうはいいてんきです": ["今日はいい天気です"],
+        "ありがとうございます": ["ありがとうございます"],
+        "よろしくおねがいします": ["よろしくお願いします"],
         "てんき": ["天気", "転機"],
         "とうきょう": ["東京"],
         "にほん": ["日本", "二本"],
@@ -84,6 +93,9 @@ public final class LocalStubEngine: JapaneseConversionEngine {
     /// ローカル学習: (よみ+表記)の選択回数。多いほど候補順位を上げる。
     private var learningCounts: [String: Int] = [:]
 
+    private var learningEnabled = true
+    public func setLearningEnabled(_ enabled: Bool) { learningEnabled = enabled }
+
     public init() {}
 
     // MARK: - JapaneseConversionEngine
@@ -111,6 +123,12 @@ public final class LocalStubEngine: JapaneseConversionEngine {
 
     public func requestConversion() -> ConversionResult {
         guard !composition.isEmpty else {
+            return currentResult()
+        }
+        if converting, segments.indices.contains(focused), !segments[focused].candidates.isEmpty {
+            let choices = segments[focused].candidates
+            let index = choices.firstIndex(where: { $0.id == segments[focused].selected.id }) ?? 0
+            segments[focused].selected = choices[(index + 1) % choices.count]
             return currentResult()
         }
         segments = splitIntoSegments(composition)
@@ -231,12 +249,27 @@ public final class LocalStubEngine: JapaneseConversionEngine {
         // 辞書の漢字候補を学習頻度の高い順に並べる（同数は元の順序を維持）。
         if let kanji = Self.dictionary[reading] {
             let sorted = kanji.enumerated().sorted { lhs, rhs in
-                let lc = learningCounts[learnKey(reading: reading, value: lhs.element)] ?? 0
-                let rc = learningCounts[learnKey(reading: reading, value: rhs.element)] ?? 0
+                let lc = learningEnabled ? (learningCounts[learnKey(reading: reading, value: lhs.element)] ?? 0) : 0
+                let rc = learningEnabled ? (learningCounts[learnKey(reading: reading, value: rhs.element)] ?? 0) : 0
                 if lc != rc { return lc > rc }
                 return lhs.offset < rhs.offset
             }
             values.append(contentsOf: sorted.map { $0.element })
+        }
+
+        // Mozc が利用できないシミュレータでも、日付・時刻の代表的な
+        // 変換候補を確認できるようにする。
+        if reading == "きょう" {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "ja_JP")
+            formatter.calendar = Calendar(identifier: .gregorian)
+            formatter.dateFormat = "yyyy/M/d"
+            values.append(formatter.string(from: Date()))
+        } else if reading == "いま" {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "ja_JP")
+            formatter.dateFormat = "H:mm"
+            values.append(formatter.string(from: Date()))
         }
 
         // ひらがなそのもの。
@@ -340,6 +373,7 @@ public final class LocalStubEngine: JapaneseConversionEngine {
     }
 
     private func bumpLearning(reading: String, value: String) {
+        guard learningEnabled else { return }
         let key = learnKey(reading: reading, value: value)
         learningCounts[key] = (learningCounts[key] ?? 0) + 1
     }
