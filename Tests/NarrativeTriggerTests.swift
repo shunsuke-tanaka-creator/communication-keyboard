@@ -115,14 +115,14 @@ final class NarrativeTriggerTests: XCTestCase {
                       "snooze 期限切れ後は再出題可能であるべき")
     }
 
-    // MARK: - 5. 21時以降は nightReflection
+    // MARK: - 5. 22時以降は nightReflection（変更: nightStartHour=22 に合わせて表記を修正）
 
     func testNightReflectionAfter21() {
         let engine = makeEngine()
         let now = date(hour: 22)
         // 22:00・初回でない・未回答 → nightReflection。
         let q = engine.nextQuestion(now: now, isFirstKeyboardUseToday: false, typing: nil)
-        XCTAssertEqual(q?.kind, .nightReflection, "21時以降は nightReflection を出すべき")
+        XCTAssertEqual(q?.kind, .nightReflection, "22時以降は nightReflection を出すべき")
     }
 
     // MARK: - 6. 翌日はまた morningMood（日別リセット）

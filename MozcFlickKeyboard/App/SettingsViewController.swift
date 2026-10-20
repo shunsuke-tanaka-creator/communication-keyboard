@@ -382,10 +382,9 @@ extension SettingsViewController: UITableViewDataSource {
             return cell
         }
 
-        // 追加: section2 は研究設定（お天気分）。0=参加者ID, 1=Backend URL, 2=質問機能 ON/OFF。
-        // 変更: section2「研究設定（お天気分）」は5行構成。
+        // 変更: section2「研究設定（お天気分）」は6行構成。
         // 0: 参加者ID / 1: 質問機能 / 2: 疑似センサー受信 ON/OFF / 3: 受信ポート / 4: 接続先の案内（IP・状態）
-        // 追加: 5: Backend URL（v0.1 研究サーバー。空なら送信しない）
+        // 5: Backend URL（既定 MacBook http://100.106.185.3:8000。空文字を保存すると送信・取得しない）
         if indexPath.section == 2 {
             let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
             cell.selectionStyle = .none
@@ -448,9 +447,9 @@ extension SettingsViewController: UITableViewDataSource {
                 field.placeholder = "p001"
                 field.tag = NarrativeFieldTag.participantID.rawValue // 追加
             } else if indexPath.row == 5 {
-                titleLabel.text = "Backend URL" // 追加: v0.1 研究サーバー
-                field.text = narrativeState.backendBaseURL // 追加: 現在値を反映（空なら送信しない）
-                field.placeholder = NarrativeState.recommendedBackendURL // 追加: Ubuntu の Tailscale IP
+                titleLabel.text = "Backend URL" // 追加: 研究サーバー（MacBook）
+                field.text = narrativeState.backendBaseURL // 追加: 現在値を反映（未保存なら既定のMac、空なら送信しない）
+                field.placeholder = NarrativeState.recommendedBackendURL // 変更: MacBook の Tailscale IP
                 field.keyboardType = .URL
                 field.tag = NarrativeFieldTag.backendURL.rawValue // 追加
             } else {

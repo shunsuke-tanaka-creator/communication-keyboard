@@ -9,9 +9,9 @@
 - 拡張が使える `UITextDocumentProxy` には、システム IME が持つ **marked text（下線付きの未確定文字列）API が無い**。
 - そのため変換中の「未確定のかな／変換候補」をホストのテキスト欄に下線表示することはできない。
 - **本プロジェクトの妥協点**:
-  - 未確定文字列は拡張内部（`KeyboardViewController.pendingComposition`）に自前保持する。
-  - 確定（`commit`）時にまとめて `insertText` する。削除は `pendingComposition` を削り、空なら `deleteBackward()`。
-  - 変換候補・未確定かなは**キーボード領域内**（候補バー／プレビュー）に表示する。
+  - 変更: 未確定よみ（変換中は選択中の文節列）は `KeyboardViewController.syncInline` で入力欄へ**実際に挿入**する（擬似インライン表示）。変わるたびに `pendingComposition` との差分だけを `deleteBackward()` / `insertText` で更新する。下線は付かない。
+  - 確定（`commit`）時は、挿入済みの未確定分を消してから確定文字列を `insertText` する。未確定が空のときの削除は `deleteBackward()`。
+  - 変換候補は**キーボード領域内**（候補バー／候補一覧）に表示する。
 
 ---
 
@@ -27,9 +27,9 @@
 
 - `keyboardType` が `.numberPad` / `.phonePad` / `.URL` / `.emailAddress` などの場合、ホストは特定の文字種を期待する。
 - カスタムキーボードは keyboardType の情報を `textDocumentProxy` から参照できるが、レイアウトを自動で切り替えてはくれない。
-- **妥協点**:
-  - `.numberPad` / `.phonePad` 等では数字・記号中心の簡易レイアウトに切り替える（またはユーザーに標準キーボードへの切替を促す）。
-  - URL / email 欄では日本語変換が不要な場合が多いため、確定は直接入力を優先。
+- **妥協点**（変更: 現状の実装）:
+  - `textDidChange` はフックだけで、`keyboardType` に応じたレイアウト切り替えは**実装していない**。数字・電話・URL・メール欄でも同じ12キーかなレイアウトが出る。
+  - `keyboardType` / `returnKeyType` の値はセッション開始時の `meta` イベントとして入力ログに記録している。
 
 ---
 
@@ -46,19 +46,26 @@
 
 ## 5. Full Access
 
-- **Full Access なしで動作させる**方針（本プロジェクトの基本方針）。
-- Full Access 無効時に**できないこと**:
-  - 一般的なネットワーク通信（本プロジェクトは元々オフラインなので影響なし）。
-  - システム全体のペーストボードへの自由なアクセス。
-- Full Access 無効でも **App Group 共有コンテナの読み書きは可能**なため、ユーザー辞書・設定・学習は問題なく永続化できる。
+- `Keyboard/Info.plist` で `RequestsOpenAccess = true`。**入力・変換だけなら Full Access なしで動作**する。
+- 変更: 次の機能はコード上 `hasFullAccess` が true のときだけ有効になる（`KeyboardViewController`）:
+  - ユーザー辞書・候補学習（`UserDictionaryStore` / `LearningStore` を生成しない）
+  - 入力ログ（`SessionLogger`）と研究サーバーへの送信
+  - お天気分（質問バナー・「記録」・「情報」）
+  - 触覚フィードバック（Full Access 無しではサンドボックスのエラーが出続けるため無効化）
+- Full Access 無効時は、一般的なネットワーク通信と、システム全体のペーストボードへの自由なアクセスもできない。
 - 詳細なプライバシー方針は [privacy.md](privacy.md)。
 
 ---
 
 ## 6. ネットワーク
 
-- 本キーボードは**一切のネットワーク通信を行わない**（完全オフライン）。
-- 変換・予測・学習・辞書はすべて端末内で完結。Full Access も不要。
+- 変更: Full Access 有効時、キーボード拡張は研究サーバー（Backend URL、既定 `http://100.106.185.3:8000`）と次の通信をする:
+  - `POST /api/sessions`
+  - `POST /api/narrative-events`
+  - `POST /api/context-events`
+  - `GET /api/questions/pending/{participant_id}`
+- 平文 HTTP を許可している（`NSAllowsArbitraryLoads = true`）。Backend URL を空欄にすると通信しない。
+- 変換・予測・学習・辞書の処理は端末内で完結し、ネットワークを使わない。
 
 ---
 
@@ -74,5 +81,5 @@
 ## 8. その他の実装上の妥協点
 
 - **カーソル移動・選択範囲**: `UITextDocumentProxy` で前後の文脈（`documentContextBeforeInput` 等）は取得できるが、任意位置へのカーソル移動 API は限定的。文節単位の高度な編集はキーボード内 UI で完結させる。
-- **音・触覚フィードバック**: Full Access 無しではシステム標準のキークリック音が使えない場合がある。触覚は `UIImpactFeedbackGenerator` を用いる（動作は端末設定に依存）。
+- **音・触覚フィードバック**: 変更: 触覚は Full Access 有効時だけ ON にする（`KeyboardView.applySettings(haptics: hasFullAccess)`）。
 - **起動の遅延**: 拡張は入力欄フォーカス時に都度ロードされるため、初期化を軽く保つ（辞書遅延ロード・スタブフォールバック）。

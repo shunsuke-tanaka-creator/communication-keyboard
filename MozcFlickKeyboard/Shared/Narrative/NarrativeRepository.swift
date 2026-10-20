@@ -5,7 +5,7 @@
 // RemoteRepository … 回答・文脈を永続キューに保存し、MacBookへPOSTする。
 //                    URL未設定・失敗時はキューに保持し、旧unsent_narrativeも移行する。
 // NarrativeRepositoryHub … local(必ず) + remote(best-effort) へ同時に流す唯一の入口。
-// 追加: v0.1 研究システム（Ubuntu FastAPI / Tailscale）連携のため、一度削除した送信層を復活させた。
+// 変更: 研究サーバー（MacBook / Tailscale）連携のため、一度削除した送信層を復活させた。
 // 呼び出し側に completion を要求せず、throw もしない（キーボード拡張から安全に呼べるようにする）。
 
 import Foundation

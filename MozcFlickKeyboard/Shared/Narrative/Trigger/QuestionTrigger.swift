@@ -2,7 +2,7 @@
 // MozcFlickKeyboard — 追加: 文脈から「どの質問を出すか」を判定する Trigger 群。
 //
 // 各 Trigger は CurrentContext を受け取り、成立すれば TriggerResult を、しなければ nil を返す純関数的な判定器。
-// Phase1 有効: Morning / NightReflection / Outing / ReturnHome。
+// 変更: 有効: SensorPending / Outing / ReturnHome / Morning / NightReflection（この優先順で TriggerEngine に登録）。
 // Phase2 は enabled フラグで無効化して同梱: LongSession / TypingFatigue。
 // Shared は framework ターゲット MozcFlickShared なので外部公開する型・メンバは全て public。
 
@@ -37,7 +37,7 @@ public final class MorningTrigger: QuestionTrigger {
     }
 }
 
-/// 追加: 夜の振り返りトリガー。夜の時間帯（21:00-翌02:00）か、手動「寝る」があれば nightReflection を出す。
+/// 変更: 夜の振り返りトリガー。夜の時間帯（NarrativeConfig: 22:00-翌02:59）か、手動「寝る」があれば nightReflection を出す。
 public final class NightReflectionTrigger: QuestionTrigger {
     /// 追加: 時刻の「時」を取り出すためのカレンダー。
     private let calendar: Calendar
@@ -51,7 +51,7 @@ public final class NightReflectionTrigger: QuestionTrigger {
         if context.manualEvents.contains(.sleep) {
             return TriggerResult(kind: .nightReflection, eventType: "night_reflection", externalTrigger: nil)
         }
-        // 追加: 夜窓は日付をまたぐ（>= 21時 もしくは <= 2時）。
+        // 変更: 夜窓は日付をまたぐ（>= nightStartHour(22)時 もしくは <= nightEndHour(2)時）。
         let hour = calendar.component(.hour, from: context.now)
         let inNight = hour >= NarrativeConfig.nightStartHour || hour <= NarrativeConfig.nightEndHour
         guard inNight else { return nil }

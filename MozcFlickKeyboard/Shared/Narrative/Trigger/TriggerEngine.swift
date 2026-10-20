@@ -109,7 +109,8 @@ public final class TriggerEngine {
 
     // MARK: - 既定構成
 
-    /// 追加: 5 Provider + Phase1 有効 4 Trigger（+ Phase2 の 2 Trigger は無効同梱）+ 既定 Policy を1発で組む。
+    /// 変更: 5 Provider + 有効 5 Trigger（SensorPending / Outing / ReturnHome / Morning / NightReflection）
+    ///       + Phase2 の 2 Trigger（無効同梱）+ 既定 Policy を1発で組む。
     /// 追加: KeyboardViewController はこれを呼ぶだけで TriggerEngine を得られる。
     public static func makeDefault(state: NarrativeState, calendar: Calendar = .current) -> TriggerEngine {
         // 追加: Provider 群（Time / Typing / Calendar(stub) / SwitchBot(stub) / Manual）。

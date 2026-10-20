@@ -93,7 +93,8 @@ python3 tools/sensor_inject.py --host 192.168.1.23
 
 - `type` … 必須。上表の値
 - `value` … 任意。`temperature`（`high` / `mid` / `low`）/ `living_presence`（`present` / `absent`）のときに指定
-- `at` … 任意。CLI は常に送信時刻（ミリ秒 + タイムゾーンオフセット）を付与します。省略時はサーバー側の現在時刻が使われます
+- `at` … 任意。CLI は常に送信時刻（ミリ秒 + タイムゾーンオフセット）を付与します。省略時は iPhone 側の受信時刻が使われます（変更: `SensorEventRouter` の実装に合わせて表記修正）
+- 追加: iOS 側は、どの type でも `ContextEvent`（`sensor_<type>`）を端末の `Narrative/context_yyyyMMdd.jsonl` に保存します。さらに、Backend URL が設定されていれば研究サーバー（既定 `http://100.106.185.3:8000`）の `POST /api/sensor-events` へ1回送ります（再送なし）。
 
 ## 期待される出力例
 

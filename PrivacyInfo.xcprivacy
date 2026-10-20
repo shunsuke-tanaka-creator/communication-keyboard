@@ -2,14 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   PrivacyInfo.xcprivacy — MozcFlickKeyboard プライバシーマニフェスト
-  方針: 完全オフライン・トラッキング無し・データ収集無し（docs/privacy.md 参照）。
-  - NSPrivacyTracking = false : トラッキングを行わない
-  - NSPrivacyTrackingDomains = 空 : 追跡ドメイン無し
-  - NSPrivacyCollectedDataTypes = 空 : 収集するデータ無し
-  - NSPrivacyAccessedAPITypes : Required Reason API を使用する場合はここに記載する。
-    現状は該当 API を明示的に使用しない前提のため空配列。
-    ユーザー辞書/設定の保存に UserDefaults(App Group) を用いるため、必要に応じて
-    CA92.1（自アプリのアクセス）等の理由コードを後から追加すること（メインが結合時に確認）。
+  変更: 研究版（MacBook 統合版）の実装に合わせて更新（docs/privacy.md 参照）。
+  - かな漢字変換・学習・ユーザー辞書は端末内のみ。
+  - Full Access 有効・プライベートモード OFF・Backend URL 設定時（既定 http://100.106.185.3:8000）は、
+    入力セッション（確定本文・前後文脈・キー操作・打鍵特徴）、お天気分の回答・文脈イベント、
+    端末Context（HealthKit 7種・今日のカレンダー予定のタイトルと時刻・バッテリー・センサー最新値）、
+    参加者ID・端末UUID を研究用の MacBook サーバーへ送信する。
+  - 広告・トラッキング・第三者 SDK への送信は行わない。
+  注意: このファイルは project.yml のどのターゲットの sources にも含まれていないため、現状アプリには同梱されない。
 -->
 <plist version="1.0">
 <dict>
@@ -18,20 +18,127 @@
 	<key>NSPrivacyTrackingDomains</key>
 	<array/>
 	<key>NSPrivacyCollectedDataTypes</key>
-	<array/>
+	<array>
+		<!-- 変更: 入力本文・前後文脈・自由記述・カレンダー予定タイトル -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeOtherUserContent</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeOther</string>
+			</array>
+		</dict>
+		<!-- 変更: キー操作・変換操作・打鍵特徴 -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeProductInteraction</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeOther</string>
+			</array>
+		</dict>
+		<!-- 変更: HealthKit（歩数・歩行距離・階段・活動エネルギー） -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeFitness</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeOther</string>
+			</array>
+		</dict>
+		<!-- 変更: HealthKit（歩行速度・歩幅・歩行非対称性）とお天気分の気分・疲労等の自己申告 -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeHealth</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeOther</string>
+			</array>
+		</dict>
+		<!-- 変更: 参加者ID（participant_id） -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeUserID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeOther</string>
+			</array>
+		</dict>
+		<!-- 変更: 端末UUID（device_id） -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeDeviceID</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeOther</string>
+			</array>
+		</dict>
+		<!-- 変更: バッテリー状態・疑似センサー値など -->
+		<dict>
+			<key>NSPrivacyCollectedDataType</key>
+			<string>NSPrivacyCollectedDataTypeOtherDataTypes</string>
+			<key>NSPrivacyCollectedDataTypeLinked</key>
+			<true/>
+			<key>NSPrivacyCollectedDataTypeTracking</key>
+			<false/>
+			<key>NSPrivacyCollectedDataTypePurposes</key>
+			<array>
+				<string>NSPrivacyCollectedDataTypePurposeOther</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSPrivacyAccessedAPITypes</key>
 	<array>
-		<!--
-		  UserDefaults を使用しているため、Required Reason API 該当時は以下を有効化する。
-		  完全オフライン・自アプリ用途のため理由コードは "CA92.1"（同一アプリ内アクセス）を想定。
-		  実際に必要か（App Store 申請対象か）はメインが結合時に確認すること。
-		-->
+		<!-- UserDefaults: 自アプリ（CA92.1）と App Group 共有（1C8F.1） -->
 		<dict>
 			<key>NSPrivacyAccessedAPIType</key>
 			<string>NSPrivacyAccessedAPICategoryUserDefaults</string>
 			<key>NSPrivacyAccessedAPITypeReasons</key>
 			<array>
 				<string>CA92.1</string>
+				<string>1C8F.1</string>
+			</array>
+		</dict>
+		<!-- 追加: ResearchSessionQueue が contentModificationDateKey を参照（App Group 内ファイル） -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>C617.1</string>
+			</array>
+		</dict>
+		<!-- 追加: InputState が ProcessInfo.systemUptime でトグル入力の経過時間を測る -->
+		<dict>
+			<key>NSPrivacyAccessedAPIType</key>
+			<string>NSPrivacyAccessedAPICategorySystemBootTime</string>
+			<key>NSPrivacyAccessedAPITypeReasons</key>
+			<array>
+				<string>35F9.1</string>
 			</array>
 		</dict>
 	</array>

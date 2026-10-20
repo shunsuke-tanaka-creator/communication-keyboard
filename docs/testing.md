@@ -1,6 +1,6 @@
 # テスト方針
 
-MozcFlickKeyboard のテストは「単体」「UI」「実機」の 3 層で、確定済み契約（`JapaneseConversionEngine` とその値型）を中心に検証します。実装モジュール（`KanaTransform` / `LocalStubEngine` / `UserDictionaryStore` 等）は結合待ちのため、条件付きコンパイルで段階的に有効化します。
+MozcFlickKeyboard のテストは「単体」「UI」「実機」の 3 層です。確定済みの契約（`JapaneseConversionEngine` とその値型）と、研究機能（Narrative / SessionLogger）を検証します。変更: `project.yml` のテストターゲット `MozcFlickTests` には `LOCAL_STUB_AVAILABLE USER_DICT_AVAILABLE` が定義済みです。`Keyboard/InputState.swift`・`Flick/`・`Candidates/`・`Narrative/` もテストバンドルに直接コンパイルされるため、全テストが常に有効です。
 
 ---
 
@@ -8,22 +8,25 @@ MozcFlickKeyboard のテストは「単体」「UI」「実機」の 3 層で、
 
 | ファイル | 種類 | 対象 | 有効化条件 |
 | --- | --- | --- | --- |
-| `Tests/ConversionEngineTests.swift` | 単体 | `JapaneseConversionEngine` 契約（モック実装で検証） | 常時 |
-| `Tests/KanaInputTests.swift` | 単体 | かな入力（`KanaTransform` / `KanaTable`、API 仮定） | 実装結合後 |
-| `Tests/FlickTests.swift` | 単体 | フリック方向判定（API 仮定） | 実装結合後 |
-| `Tests/ConversionCaseTests.swift` | 単体/回帰 | 変換ケース（`LocalStubEngine` 対象） | `LOCAL_STUB_AVAILABLE` |
-| `Tests/UserDictionaryTests.swift` | 単体/性能 | ユーザー辞書（`UserDictionaryStore`、API 仮定） | `USER_DICT_AVAILABLE` |
+| `Tests/ConversionEngineTests.swift` | 単体 | `JapaneseConversionEngine` 契約（モック実装で検証。一部 `LocalStubEngine`） | 常時（`LOCAL_STUB_AVAILABLE` 部分も定義済み） |
+| `Tests/KanaInputTests.swift` | 単体 | かな入力（`KanaTransform` / `KanaTable`） | 常時 |
+| `Tests/FlickTests.swift` | 単体 | フリック方向判定 | 常時 |
+| `Tests/ConversionCaseTests.swift` | 単体/回帰 | 変換ケース（`LocalStubEngine` 対象） | `LOCAL_STUB_AVAILABLE`（定義済み） |
+| `Tests/UserDictionaryTests.swift` | 単体/性能 | ユーザー辞書（`UserDictionaryStore`） | 常時 |
+| `Tests/KeyboardInteractionTests.swift` | 単体 | `PersonalizedConversionEngine`（辞書補完・学習記録）とキーボード操作 | 常時 |
+| `Tests/NarrativeTriggerTests.swift` | 単体 | お天気分の Trigger / Policy / CSV / 打鍵統計 / `SensorEventRouter` | 常時 |
+| `Tests/SessionRotationTests.swift` | 単体 | `SessionLogger` の60秒周期確定・無入力後の再開・非表示後の停止 | 常時 |
 
-> テストファイル冒頭に「モジュール名・対象 API が未確定な場合はメインが結合時に調整」と明記しています。`@testable import` のモジュール名（例: `MozcFlickKeyboardShared`）は結合時に確定します。
+> モジュール名は `@testable import MozcFlickShared` に確定済みです。
 
 ---
 
 ## 2. 条件付きコンパイルフラグ
 
-実装が Shared に結合されたら、テストターゲットの `Active Compilation Conditions`（または `xcodebuild ... OTHER_SWIFT_FLAGS='-D FLAG'`）に以下を追加して有効化します。
+変更: `project.yml` のテストターゲットに定義済みです（`SWIFT_ACTIVE_COMPILATION_CONDITIONS: "LOCAL_STUB_AVAILABLE USER_DICT_AVAILABLE"`）。
 
-- `LOCAL_STUB_AVAILABLE` … `LocalStubEngine` を用いる契約/変換ケーステスト
-- `USER_DICT_AVAILABLE` … `UserDictionaryStore` を用いる辞書テスト
+- `LOCAL_STUB_AVAILABLE` … `LocalStubEngine` を用いる契約・変換ケーステスト
+- `USER_DICT_AVAILABLE` … 定義のみ（現状、このフラグで囲まれたテストはありません）
 
 ---
 
@@ -40,7 +43,7 @@ xcodebuild test \
   -destination 'platform=iOS Simulator,name=iPhone 15'
 ```
 
-フラグを有効化して実行する例:
+フラグは定義済みのため、追加指定なしで実行できます。CLI で明示する例:
 ```bash
 xcodebuild test \
   -project MozcFlickKeyboard.xcodeproj \
@@ -56,7 +59,7 @@ xcodebuild test \
 Custom Keyboard の制約（[ios-keyboard-limitations.md](ios-keyboard-limitations.md)）を踏まえ、次の入力欄種別で手動/自動 UI テストを行います。
 
 - 通常テキスト欄（`UITextField` / `UITextView`）
-- `keyboardType = .numberPad` / `.phonePad`（数字系レイアウト）
+- `keyboardType = .numberPad` / `.phonePad`（変更: 専用レイアウトは未実装。同じかなレイアウトが出ることを確認）
 - `.URL` / `.emailAddress`
 - `isSecureTextEntry`（標準キーボードへ切替されることを確認）
 

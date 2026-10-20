@@ -1,10 +1,10 @@
 // ResearchAPIClient.swift
-// MozcFlickKeyboard — 追加: v0.1 研究サーバー（Ubuntu FastAPI / Tailscale）への通信クライアント。
+// MozcFlickKeyboard — 変更: 研究サーバー（MacBook / Tailscale）への通信クライアント。
 //
-// - upload(_:)               … セッションをファイル再送キューへ積み、古い順に POST /api/sessions
-// - flushPendingSessions()   … キューに残った未送信セッションを再送（キーボード表示時に呼ぶ）
+// - upload(_:)               … セッションをファイル再送キュー（App Group Library/Application Support/PendingResearchSessions）へ積み、古い順に POST /api/sessions
+// - flushPendingSessions()   … キューに残った未送信セッションを再送（キーボード表示時・親アプリ同期時に呼ぶ）
 // - fetchPendingQuestion(...) … GET /api/questions/pending/{participant_id}（サーバーの最新質問1件）
-// - sendSensorEvent(_:)       … POST /api/sensor-events
+// - sendSensorEvent(_:)       … POST /api/sensor-events（1回だけ送る。失敗しても再送キューには積まない）
 // baseURL が空なら何もしない（isConfigured = false）。
 
 import Foundation

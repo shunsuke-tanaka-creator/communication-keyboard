@@ -5,11 +5,13 @@
 //  - 12キーフリック UI（KeyboardView）を container view に差し込む。
 //  - KeyboardView から届く入力イベント（KeyboardActionDelegate 経由）を InputState / 変換エンジンで処理し、
 //    確定文字列を UITextDocumentProxy へ反映する。
-//  - 地球儀キーによるキーボード切替、returnKeyType / keyboardType の考慮、Full Access 不要な範囲での動作。
+//  - 地球儀キーによるキーボード切替。入力・変換は Full Access 不要。
+//    変更: 入力ログ・学習・ユーザー辞書・お天気分・触覚・研究サーバー送信は Full Access 有効時のみ動く。
 //
 // 未確定文字列の扱い:
-//  - UITextDocumentProxy には marked text 相当の API が無いため、確定前の文字列（composition）は insertText せず
-//    InputState / エンジン内部に保持し、確定時にまとめて insertText する。削除は deleteBackward を用いる。
+//  - 変更: UITextDocumentProxy には marked text 相当の API が無いため、未確定よみ（変換中は選択中の文節列）を
+//    syncInline で入力欄へ実際に挿入し、変化のたびに差分だけ deleteBackward / insertText する（擬似インライン表示）。
+//    確定時は挿入済みの未確定分を消してから確定文字列を insertText する。
 //    詳細は docs/ios-keyboard-limitations.md 参照。
 
 import UIKit
@@ -22,7 +24,7 @@ enum SettingsKeys {
     static let flickOnlyEnabled = "flickOnlyEnabled"
     static let learningEnabled = "learningEnabled"
     static let privateModeEnabled = "privateModeEnabled"
-    static let schedules = "schedules"         // 追加: 予定の配列。各要素は "HH:mm\t文言"。
+    static let schedules = "schedules"         // 変更: 予定の配列。各要素は TSV "HH:mm\t文言\tチェック要否(0/1)\t曜日ビット7桁"（旧 "HH:mm\t文言" も読める）。
 }
 
 final class KeyboardViewController: UIInputViewController {

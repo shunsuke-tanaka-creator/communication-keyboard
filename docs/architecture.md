@@ -1,6 +1,6 @@
 # アーキテクチャ
 
-> MacBook統合版の現行仕様は [macbook-lifelog.md](macbook-lifelog.md) を参照してください。以下のPhase 1設計にある「ローカルのみ」「送信機能は削除済み」の記述は旧仕様です。現在は入力セッション・回答・文脈をMacに同期します。
+> 変更: 本書はコードの現状に合わせてあります。研究データの取得範囲・送信経路は [privacy.md](privacy.md)、MacBook 連携の運用は [macbook-lifelog.md](macbook-lifelog.md) を参照してください。
 
 MozcFlickKeyboard は「ホストアプリ」と「Keyboard Extension」の 2 ターゲットから成り、共通ロジックを Shared として共有します。かな漢字変換は Mozc（C++）を Swift から呼び出して実現し、Mozc 未ビルド時は同一プロトコルのローカルスタブへ差し替えて動作します。
 
@@ -11,20 +11,24 @@ MozcFlickKeyboard は「ホストアプリ」と「Keyboard Extension」の 2 �
 ```
 ┌─────────────────────────────┐        ┌──────────────────────────────┐
 │  ホストアプリ (App)          │        │  Keyboard Extension (Keyboard) │
-│  - 設定 UI                   │        │  - 12キーフリック UI           │
-│  - ユーザー辞書管理          │        │  - 入力 → 変換 → 確定          │
-│  - キーボード有効化の案内     │        │  - UITextDocumentProxy 反映     │
+│  - くらしのログ（Mac連携）   │        │  - 12キーフリック UI           │
+│  - 設定 / 予定・安否確認     │        │  - 入力 → 変換 → 確定          │
+│  - お天気分ダッシュボード    │        │  - UITextDocumentProxy 反映     │
+│  - 入力ログ・安否確認ログ閲覧│        │  - 入力ログ / お天気分バナー    │
+│  - HealthKit/EventKit 取得   │        │  - 研究サーバーへ送信          │
 └──────────────┬──────────────┘        └───────────────┬──────────────┘
                │                                        │
                └──────────────┬─────────────────────────┘
                               ▼
                  ┌──────────────────────────┐
-                 │  Shared (共通 Swift)      │
+                 │  Shared (MozcFlickShared) │
                  │  - JapaneseConversionEngine（プロトコル）
+                 │  - PersonalizedConversionEngine（辞書・学習の重ね合わせ）
                  │  - ConversionResult/Candidate/Segment
                  │  - AppConfig（App Group）
-                 │  - UserDictionary（Entry/Store）
+                 │  - UserDictionary / Learning
                  │  - KanaTable / KanaTransform / KeyLayout
+                 │  - SessionLogger / Narrative / Research
                  └────────────┬─────────────┘
                               ▼
         ┌───────────────────────────────────────────────┐
@@ -38,7 +42,8 @@ MozcFlickKeyboard は「ホストアプリ」と「Keyboard Extension」の 2 �
 ```
 
 - App / Keyboard は Shared を通じてのみ変換エンジンに触れ、Mozc の C++ 型は一切露出しません。
-- `MOZC_AVAILABLE` の有無で `MozcConversionEngine` / `LocalStubEngine` を切り替えます。
+- `MOZC_AVAILABLE` の有無で `MozcConversionEngine` / `LocalStubEngine` を切り替えます。`project.yml` では実機 SDK（`iphoneos*`）のときだけ `MOZC_AVAILABLE` を定義します。シミュレータでは `LocalStubEngine` で動作します。実機でも Mozc の初期化に失敗した場合（`isMozcAvailable == false`）は `LocalStubEngine` に切り替わります。
+- キーボードは、選んだエンジンを `PersonalizedConversionEngine` で包み、ユーザー辞書の候補と学習スコアを重ねます（Full Access が無いと辞書・学習ストアは nil）。
 
 ---
 
@@ -46,9 +51,9 @@ MozcFlickKeyboard は「ホストアプリ」と「Keyboard Extension」の 2 �
 
 | ターゲット | 責務 | 触れないもの |
 | --- | --- | --- |
-| **App（ホスト）** | 設定（トグル入力・学習・プライベートモード等）、ユーザー辞書 CRUD・CSV/JSON 入出力、キーボード有効化の導線 | UITextDocumentProxy（拡張のみ） |
-| **Keyboard（拡張）** | フリック UI、入力イベント → 変換エンジン → 確定文字列を `UITextDocumentProxy` へ反映、地球儀キー切替 | メモリ・API 制約（下記制約 doc） |
-| **Shared** | 変換プロトコル・値型、App Group アクセス、かな変換テーブル、ユーザー辞書ストア | UIKit 依存の最小化 |
+| **App（ホスト）** | タブ「くらしのログ」（Mac ダッシュボード・活動記録・機器名）／「キーボード」（設定・予定・研究設定、お天気分ダッシュボード、入力ログ・安否確認ログ閲覧、ライセンス、デバッグ情報）、HealthKit / EventKit / バッテリーの取得、疑似センサー HTTP 受信 | UITextDocumentProxy（拡張のみ） |
+| **Keyboard（拡張）** | フリック UI、入力イベント → 変換エンジン → `UITextDocumentProxy` へ反映、地球儀キー切替、入力ログ記録と送信、お天気分バナー、安否確認表示 | HealthKit / EventKit（親アプリが取得した値を App Group から読むだけ） |
+| **Shared** | 変換プロトコル・値型、App Group アクセス、かな変換テーブル、ユーザー辞書・学習ストア、SessionLogger、Narrative、Research（送信クライアント・キュー） | UIKit 依存の最小化 |
 | **MozcBridge** | Swift ↔ C++ 境界（ObjC++）。Mozc session を包む | Swift へ C++ 型を漏らさない |
 
 ---
@@ -101,7 +106,7 @@ Mozc は C++ で書かれているため、Swift から直接呼べません。�
 - **Converting → Composing**: `cancelConversion`（composition 保持）。
 - **→ Empty**: `commit`（確定文字列を返し内部リセット）または `reset`。
 
-拡張側 UI（`KeyboardViewController`）は `UITextDocumentProxy` に marked text API が無いため、未確定文字列を `pendingComposition` に自前保持し、確定時にまとめて `insertText` します。
+拡張側 UI（`KeyboardViewController`）は `UITextDocumentProxy` に marked text API が無いため、未確定文字列（変換中は選択中の文節列）を `syncInline` で入力欄へ実際に挿入します。`pendingComposition` との差分だけを `deleteBackward` / `insertText` で更新し、確定時は挿入済みの分を消してから確定文字列を入れ直します。
 
 ---
 
@@ -109,11 +114,16 @@ Mozc は C++ で書かれているため、Swift から直接呼べません。�
 
 | データ | 形式 | 場所 |
 | --- | --- | --- |
-| 設定（トグル入力・学習・プライベートモード） | `UserDefaults(suiteName: AppGroupID)` | App Group |
-| ユーザー辞書（`UserDictionaryEntry`） | JSON（Codable） | App Group 共有コンテナ |
-| 学習データ（変換履歴） | Mozc 形式 or 独自バイナリ | App Group 共有コンテナ（プライベートモード時は書き込まない） |
+| 設定（トグル入力・フリックのみ・学習・プライベートモード・予定・研究設定） | `UserDefaults(suiteName: AppGroupID)` | App Group |
+| ユーザー辞書（`UserDictionaryEntry`） | JSON（Codable） | `UserDictionary/user_dictionary.json` |
+| 候補学習（`LearningRecord`: よみ・語・頻度・最終使用） | JSON（Codable、最大5000件） | `Learning/learning.json`（プライベートモード・学習OFF・パスワード欄では書き込まない） |
+| 入力ログ | JSONL | `Library/Caches/SessionLogs/` |
+| 送信キュー | 1件1ファイルの JSON | `Library/Application Support/PendingResearchSessions/` / `ResearchOutbox/` |
+| お天気分 | JSONL | `Narrative/narrative_*.jsonl` / `context_*.jsonl` |
+| 安否確認 | JSONL | `SafetyChecks/check_*.jsonl` |
+| 端末Context・端末UUID | JSON / 文字列 | App Group UserDefaults（`research.deviceContext` / `research.deviceID`） |
 
-ファイル保護属性は端末ロック時に保護する既定（`.completeUntilFirstUserAuthentication` 目安）。詳細は [privacy.md](privacy.md)。
+`learning.json` と `user_dictionary.json` にだけ `.completeUntilFirstUserAuthentication` を明示的に設定しています。詳細は [privacy.md](privacy.md)。
 
 ---
 
@@ -121,7 +131,7 @@ Mozc は C++ で書かれているため、Swift から直接呼べません。�
 
 - ID: `group.com.tanaka05.MozcFlickKeyboard`（`Config/Project.xcconfig` の `APP_GROUP_ID`）。
 - アクセスは `AppConfig.appGroupID` / `AppConfig.sharedContainerURL` に集約。
-- ホスト（辞書編集）と拡張（辞書参照）が同じコンテナを読み書きするため、書き込みは原子的置換（一時ファイル → rename）を推奨。
+- ホスト（設定・予定・端末Context の書き込み、ログ閲覧）と拡張（辞書の読み取り、学習・ログ・回答の書き込み）が同じコンテナを読み書きするため、書き込みは原子的置換（一時ファイル → rename）を推奨。
 
 ---
 
@@ -154,9 +164,9 @@ Mozc は C++ で書かれているため、Swift から直接呼べません。�
 
 ## 11. お天気分（Narrative）サブシステム
 
-研究用マイクロ日記「お天気分」を Shared（`MozcFlickShared`）へ新規追加した。日常イベントを検知／推定してキーボード上部に質問バナーを1問出し、回答を `NarrativeEvent` として保存する。通常の変換・入力経路には影響を与えず、回答はホストアプリのテキスト欄（`UITextDocumentProxy`）へ挿入しない。研究データは**端末内 JSONL のみ**に保存し、外部送信は行わない（バックエンド送信は削除済み）。詳細な運用・データ形状は [narrative-integration.md](narrative-integration.md)、プライバシー方針は [privacy.md](privacy.md) を参照。
+研究用マイクロ日記「お天気分」は Shared（`MozcFlickShared`）にあります。日常イベントを検知・推定してキーボード上部に質問バナーを1問出し、回答を `NarrativeEvent` として保存します。通常の変換・入力経路には影響せず、回答はホストアプリのテキスト欄（`UITextDocumentProxy`）へ挿入しません。研究データは端末内の JSONL に保存し、Backend URL が設定されていれば（既定は MacBook）永続キュー経由でサーバーへ送ります。詳細な運用・データ形状は [narrative-integration.md](narrative-integration.md)、プライバシー方針は [privacy.md](privacy.md) を参照してください。
 
-処理は「Context → Trigger → Policy → Question → Banner → Answer → NarrativeEvent → Analyzer/PMTT → Repository」の一方向フローで構成する。加えて、疑似センサー入力の経路として「Python CLI（同一 LAN の PC）→ 親アプリの受信サーバー → Router → App Group（キュー / JSONL）→ キーボード」を持つ。
+処理は「Context → Trigger → Policy → Question → Banner → Answer → NarrativeEvent → Analyzer/PMTT → Repository」の一方向フローです。Backend URL が設定されている場合は、ローカル Trigger より先に `GET /api/questions/pending/{participant_id}` でサーバー側の質問を確認します。疑似センサー入力の経路として「Python CLI（同一 LAN の PC）→ 親アプリの受信サーバー → Router → App Group（キュー / JSONL）→ キーボード」もあります。
 
 ```mermaid
 flowchart TD
@@ -177,8 +187,9 @@ flowchart TD
   Answer --> Event["NarrativeEvent"]
   Event --> Analyzer["NarrativeAnalyzer (Mock)"]
   Event --> PMTT["PMTTAdapter (Mock)"]
-  Event --> Hub["NarrativeRepositoryHub (ローカルのみ)"]
+  Event --> Hub["NarrativeRepositoryHub (ローカル + Mac送信)"]
   Hub --> Local["LocalRepository"]
+  Hub --> Remote["RemoteRepository → ResearchOutbox → POST /api/narrative-events, /api/context-events"]
   Local --> Store["NarrativeStore (App Group JSONL)"]
   subgraph SensorPath["疑似センサー受信 (親アプリ前面時のみ)"]
     Py["Python CLI (同一LANのPC)"] -->|"POST /sensor"| Srv["SensorHTTPServer (Network.framework)"]
@@ -187,15 +198,16 @@ flowchart TD
   Router -->|"door_open/close"| MQueue["NarrativeState 手動イベントキュー"]
   Router -->|"temperature high/low"| PQueue["NarrativeState 保留質問キュー"]
   Router -->|"全 type を記録"| Store
+  Router -->|"POST /api/sensor-events (再送なし)"| Mac["研究サーバー (MacBook)"]
   MQueue --> ManP
   PQueue --> Triggers
 ```
 
 - **配置**: 純ロジック（Models / Catalog / State / Store / Repository / Context / Trigger / Policy / TypingMetrics / Analyzer / Recommendation / PMTT / Sensor の Router）は Shared に置き、UI（`NarrativeQuestionBanner`）は Keyboard 拡張、ダッシュボードと受信サーバー（`SensorHTTPServer`）は App に置く。UITextDocumentProxy へ触れるのは従来どおり Keyboard 拡張のみで、回答経路はそこを構造的に呼ばない。
-- **状態と保存**: 出題制御状態は App Group `UserDefaults`（`NarrativeState`）、イベント本体は App Group 共有コンテナ `Narrative/*.jsonl`（`NarrativeStore`、既存 `SafetyCheckLog` と同じ流儀で throw しない）。ファイルは `narrative_yyyyMMdd.jsonl` と `context_yyyyMMdd.jsonl` の2種のみ。
-- **保存先**: `NarrativeRepositoryHub` は `LocalRepository` だけを包む（`init(store:)`）。バックエンド送信（URLSession によるサーバー送信）は削除し、研究データは端末内に留める。将来送信が必要になったらこの Repository 層に別クラスを足して Hub から呼ぶ。
+- **状態と保存**: 出題制御の状態は App Group `UserDefaults`（`NarrativeState`）に、イベント本体は App Group 共有コンテナの `Narrative/*.jsonl`（`NarrativeStore`。既存の `SafetyCheckLog` と同じく throw しない）に置く。日付別ファイルは `narrative_yyyyMMdd.jsonl` と `context_yyyyMMdd.jsonl` の2種類。旧版の `unsent_narrative.jsonl` は読み込んだら `ResearchOutbox` へ移行する。
+- **保存先**: `NarrativeRepositoryHub(baseURL:)` は `LocalRepository`（必ず保存）と `RemoteRepository`（`ResearchEventOutbox` に1件1ファイルで積んで POST。成功した分だけ削除）を包む。Backend URL が空ならキューに残るだけで送信しない。
 - **疑似センサー受信**: 親アプリが Network.framework（`NWListener` + TCP）で `POST /sensor` を待ち受け、`SensorEventRouter` が「手動イベントキュー（外出/帰宅）」「保留質問キュー（疲労チェック）」「`ContextEvent`（`sensor_<type>` / `source="sensor"`）」へ振り分ける。キーボードへは App Group 経由で橋渡しし、次回のキーボード表示または 60 秒チェックで拾われる。iOS の制約により**親アプリが前面のときだけ**受信でき、`SceneDelegate` の active/背面で start/stop する（設定 ON のときのみ）。
 
 - **端末Context（HealthKit 活動量）**: 親アプリの `ResearchContextCollector` が HealthKit を読み取りのみで取得し、App Group の `ResearchDeviceContext` へ保存する。合計系（歩数 / 歩行距離 / 登った階段 / 活動エネルギー）は今日0時〜現在、平均系（歩行速度 / 歩幅 / 歩行非対称性）は直近1時間で集計する。`HKObserverQuery` + `enableBackgroundDelivery(.hourly)`（`AppDelegate.didFinishLaunching` で起動）によりバックグラウンドでも約1時間ごとに更新する。キーボード拡張は HealthKit を直接扱えないため、下部「情報」ボタンの Info ページ（`NarrativeQuestionBanner.showInfo`）で App Group の保存値を全画面表示するだけに留める。これらは `ResearchSessionUpload.context` としてサーバー送信にも含まれる。
 - **エラー設計**: 既存方針に合わせ、保存は throw しない（失敗はログのみで入力継続を最優先）。受信サーバーも失敗時はログを出して停止するだけで、キーボードの動作には影響しない。
-- **フェーズゲート**: Phase 1 は朝 / 夜 / 外出 / 帰宅の Trigger と疑似センサー由来の `SensorPendingTrigger` が有効。`TypingFatigueTrigger` / `LongSessionTrigger` は同梱するが既定 `enabled=false`（Phase 2）。`SwitchBotContextProvider` は stub（Phase 3）で、実センサー連携時は疑似センサー経路を差し替える。`NarrativeAnalyzer` / `PMTTAdapter` / `RecommendationEngine` は Mock 実装で、CoreML / LLM 等へ差し替え可能なプロトコル境界を用意している（Phase 4）。
+- **フェーズゲート**: 有効な Trigger は `SensorPendingTrigger` / 外出 / 帰宅 / 朝 / 夜の5つ。`TypingFatigueTrigger` / `LongSessionTrigger` は同梱しているが既定は `enabled=false`（Phase 2）。`CalendarContextProvider` と `SwitchBotContextProvider` は stub（SwitchBot の実データは Mac 側で BLE 収集し、ダッシュボードに表示するだけ）。`NarrativeAnalyzer` / `PMTTAdapter` / `RecommendationEngine` は Mock 実装で、CoreML / LLM などへ差し替えられるようプロトコル境界を用意している（Phase 4）。

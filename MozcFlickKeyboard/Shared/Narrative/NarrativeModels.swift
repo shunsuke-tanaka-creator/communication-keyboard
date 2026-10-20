@@ -15,7 +15,7 @@ public enum QuestionKind: String, Codable, CaseIterable {
     case morningMood
     /// 今日の目標（朝、morningMood の後）
     case morningGoal
-    /// 夜の振り返り（21:00-翌02:00）
+    /// 変更: 夜の振り返り（22:00-翌02:59 または手動「寝る」。5項目×5段階）
     case nightReflection
     /// 外出先（手動イベント「外出した」由来）
     case outingDestination
@@ -141,7 +141,7 @@ public struct ContextSnapshot: Codable {
     public let timeOfDay: String
     /// 直近に入力操作があったか。
     public let typingActive: Bool
-    /// カレンダー上で多忙か（Phase1 は stub で常に false）。
+    /// 変更: カレンダー上で多忙か（CalendarContextProvider が stub のため常に false）。
     public let calendarBusy: Bool
     /// 外部トリガー名（manual_outing / switchbot_door など）。無ければ nil。
     public let externalTrigger: String?

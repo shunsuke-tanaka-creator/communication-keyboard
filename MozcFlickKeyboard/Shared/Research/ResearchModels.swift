@@ -1,5 +1,5 @@
 // ResearchModels.swift
-// MozcFlickKeyboard — 追加: v0.1 研究システム（Ubuntu FastAPI）とやり取りするモデル一式。
+// MozcFlickKeyboard — 変更: 研究サーバー（MacBook / Tailscale、既定 http://100.106.185.3:8000）とやり取りするモデル一式。
 //
 // - ResearchSessionUpload … POST /api/sessions の body（1分セッション単位の生ログ + 打鍵特徴 + 端末Context）
 // - ResearchDeviceContext … 親アプリが集めた端末Context（HealthKit / カレンダー / バッテリー / センサー最新値）

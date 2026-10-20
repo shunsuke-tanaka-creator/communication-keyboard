@@ -91,8 +91,9 @@ public final class TypingContextProvider: ContextProvider {
     }
 }
 
-/// 追加: カレンダー多忙度を担う Provider。Phase1 は Stub で常に calendarBusy=false。
-/// 追加: EventKit 連携（実際の予定取得）は将来拡張。今は権限要求もしない。
+/// 追加: カレンダー多忙度を担う Provider。Stub で常に calendarBusy=false。
+/// 変更: このProviderは EventKit を使わない。予定（タイトル・時刻）は親アプリの ResearchContextCollector が別途取得し、
+///       セッション送信の context.calendar_events に載せる（出題判定には使っていない）。
 public final class CalendarContextProvider: ContextProvider {
     public init() {}
 

@@ -5,7 +5,7 @@
 // 置き場所: <AppGroup>/Narrative/
 //   narrative_yyyyMMdd.jsonl … 回答済み NarrativeEvent
 //   context_yyyyMMdd.jsonl   … 質問を伴わない ContextEvent
-//   unsent_narrative.jsonl   … 送信失敗分の退避キュー（オフライン対応）
+//   unsent_narrative.jsonl   … 変更: 旧バージョンの送信失敗分。現在は RemoteRepository が ResearchOutbox へ移行するだけで新規には書かない
 // App Group が無い / IO 失敗のいずれでもクラッシュせず黙って何もしない。
 
 import Foundation

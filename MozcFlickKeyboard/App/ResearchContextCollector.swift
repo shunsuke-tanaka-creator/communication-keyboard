@@ -1,12 +1,14 @@
 // ResearchContextCollector.swift
 // MozcFlickKeyboard — 追加: 親アプリで端末Contextを集め、App Group（ResearchContextStore）へ書き込む。
 //
-// 取得するもの（v0.1 仕様）:
-//  - HealthKit: 今日の歩数・歩行距離（読み取りのみ）
-//  - EventKit : 今日のカレンダー予定のタイトルと時刻
+// 変更: 取得するもの（コードの実装に合わせて更新）:
+//  - HealthKit: 今日0時〜現在の合計（歩数・歩行距離・登った階段・活動エネルギー）と
+//               直近1時間の平均（歩行速度・歩幅・歩行非対称性）の7種（読み取りのみ）
+//  - EventKit : 今日の全カレンダー予定のタイトルと開始・終了時刻
 //  - Battery  : 残量と状態
 // キーボード拡張は HealthKit / EventKit を使えないため、親アプリが集めた最新値をセッション送信時に添付する。
 // SceneDelegate.sceneDidBecomeActive から refresh() を呼ぶ（初回だけ権限ダイアログが出る）。
+// HealthKit は AppDelegate から startBackgroundDelivery() を呼び、約1時間ごとにバックグラウンド更新する。
 
 import UIKit
 import HealthKit

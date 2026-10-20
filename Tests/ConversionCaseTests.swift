@@ -25,7 +25,7 @@ import XCTest
 // モジュール名はメインが結合時に調整すること。
 @testable import MozcFlickShared
 
-// LocalStubEngine が結合されるまではビルド対象外。結合後 LOCAL_STUB_AVAILABLE を定義する。
+// 変更: project.yml のテストターゲットで LOCAL_STUB_AVAILABLE を定義済みのため、常にビルド対象。
 #if LOCAL_STUB_AVAILABLE
 
 final class ConversionCaseTests: XCTestCase {
