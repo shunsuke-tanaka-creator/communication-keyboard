@@ -18,6 +18,12 @@ final class SessionLogsViewController: UIViewController {
         title = "入力ログ"
         view.backgroundColor = .systemBackground // ダークモード追従
         setupTableView()
+        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "抽出", style: .plain, target: self, action: #selector(openExport)) // 追加: 期間抽出画面へ
+    }
+
+    /// 追加: 期間指定してログを抽出・共有する画面を開く。
+    @objc private func openExport() {
+        navigationController?.pushViewController(SessionLogExportViewController(), animated: true)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -112,5 +118,84 @@ final class SessionLogDetailViewController: UIViewController {
             textView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             textView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
+    }
+}
+
+/// 追加: 開始・終了日時を指定し、期間内のセッションログを1つのJSONLに結合して共有シートで書き出す画面。
+/// 期間判定はファイル名のセッション開始時刻（session_yyyyMMdd_HHmmss_SSS_xxxxxxxx.jsonl）で行う。
+/// 各行には元ファイル名を "file" キーとして先頭に付与する。
+final class SessionLogExportViewController: UIViewController {
+
+    private let startPicker = UIDatePicker() // 追加
+    private let endPicker = UIDatePicker() // 追加
+
+    /// 追加: ファイル名の日時部分を読むフォーマッタ（SessionLogger と同じ形式）。
+    private let fileNameFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyyMMdd_HHmmss_SSS"
+        return f
+    }()
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "期間を指定して抽出"
+        view.backgroundColor = .systemBackground
+        startPicker.datePickerMode = .dateAndTime
+        endPicker.datePickerMode = .dateAndTime
+        startPicker.date = Calendar.current.startOfDay(for: Date()) // 追加: 既定は今日0時〜現在
+        endPicker.date = Date()
+
+        let startLabel = UILabel()
+        startLabel.text = "開始"
+        let endLabel = UILabel()
+        endLabel.text = "終了"
+        let button = UIButton(type: .system)
+        button.setTitle("抽出してダウンロード", for: .normal)
+        button.addTarget(self, action: #selector(export), for: .touchUpInside)
+
+        let stack = UIStackView(arrangedSubviews: [startLabel, startPicker, endLabel, endPicker, button])
+        stack.axis = .vertical
+        stack.alignment = .leading
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 20),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20)
+        ])
+    }
+
+    /// 追加: 期間内ファイルを古い順に結合し、一時ファイルに書いて共有シートを開く。
+    @objc private func export() {
+        let start = startPicker.date
+        let end = endPicker.date
+        let dir = SessionLogger.logsDirectoryURL!
+        let urls = try! FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+        let targets = urls.filter { url in
+            let name = url.lastPathComponent
+            guard url.pathExtension == "jsonl", name.hasPrefix("session_") else { return false }
+            let stamp = String(name.dropFirst("session_".count).prefix(19)) // yyyyMMdd_HHmmss_SSS
+            guard let date = fileNameFormatter.date(from: stamp) else { return false }
+            return date >= start && date <= end
+        }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+
+        var output = ""
+        for url in targets {
+            let name = url.lastPathComponent
+            let text = try! String(contentsOf: url, encoding: .utf8)
+            for line in text.split(separator: "\n") where line.hasPrefix("{") {
+                output += "{\"file\":\"\(name)\"," + line.dropFirst() + "\n" // 先頭にファイル名を付与
+            }
+        }
+
+        let outName = "session_export_\(fileNameFormatter.string(from: start))_\(fileNameFormatter.string(from: end)).jsonl"
+        let outURL = FileManager.default.temporaryDirectory.appendingPathComponent(outName)
+        try! output.write(to: outURL, atomically: true, encoding: .utf8)
+        NSLog("[MFK-Log] export files=\(targets.count) bytes=\(output.utf8.count) url=\(outURL.path)") // デバッグ: 抽出結果
+
+        let activity = UIActivityViewController(activityItems: [outURL], applicationActivities: nil)
+        present(activity, animated: true)
     }
 }
