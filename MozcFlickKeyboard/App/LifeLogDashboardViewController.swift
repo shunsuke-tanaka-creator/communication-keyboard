@@ -32,7 +32,10 @@ final class LifeLogDashboardViewController: UITableViewController {
         title = "くらしのログ"
         tableView.rowHeight = UITableView.automaticDimension
         tableView.estimatedRowHeight = 90
-        navigationItem.rightBarButtonItem = UIBarButtonItem(title: "活動を記録", style: .plain, target: self, action: #selector(recordActivity))
+        navigationItem.rightBarButtonItems = [
+            UIBarButtonItem(title: "研究", style: .plain, target: self, action: #selector(openResearch)),
+            UIBarButtonItem(title: "活動を記録", style: .plain, target: self, action: #selector(recordActivity))
+        ]
         navigationItem.leftBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "gearshape"), style: .plain, target: self, action: #selector(settings))
         refreshControl = UIRefreshControl()
         refreshControl?.addTarget(self, action: #selector(refresh), for: .valueChanged)
@@ -73,6 +76,9 @@ final class LifeLogDashboardViewController: UITableViewController {
     private func startTimer() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in self?.refresh() }
+    }
+    @objc private func openResearch() {
+        navigationController?.pushViewController(ResearchDashboardViewController(), animated: true)
     }
     @objc private func settings() { navigationController?.pushViewController(SettingsViewController(), animated: true) }
     @objc private func dateChanged() {
@@ -228,7 +234,7 @@ final class LifeLogDashboardViewController: UITableViewController {
     private func chooseActivity(_ category: ResearchActivityCategory) {
         let alert = UIAlertController(title: category.label, message: nil, preferredStyle: .actionSheet)
         for activity in category.activities {
-            alert.addAction(UIAlertAction(title: activity.label, style: .default) { [weak self] _ in self?.saveActivity(activity.label) })
+            alert.addAction(UIAlertAction(title: activity.label, style: .default) { [weak self] _ in self?.saveActivity(activity.label, value: activity.value) })
         }
         alert.addAction(UIAlertAction(title: "キャンセル", style: .cancel))
         present(alert, animated: true)
@@ -243,11 +249,11 @@ final class LifeLogDashboardViewController: UITableViewController {
         alert.addAction(UIAlertAction(title: "キャンセル", style: .cancel))
         present(alert, animated: true)
     }
-    private func saveActivity(_ text: String) {
+    private func saveActivity(_ text: String, value: String? = nil) {
         let now = Date()
         let event = NarrativeEvent(eventID: UUID().uuidString, participantID: state.participantID, source: "parent_app", eventType: "activity_report", detectedAt: now, questionShownAt: now, answeredAt: now,
                                    context: ContextSnapshot(timeOfDay: TimeOfDay.label(for: now), typingActive: false, calendarBusy: false, externalTrigger: nil),
-                                   question: .init(kind: .activityCheck, prompt: "今、何をしていますか？"), answer: .init(freeText: text))
+                                   question: .init(kind: .activityCheck, prompt: "今、何をしていますか？"), answer: .init(label: value, freeText: text))
         guard ResearchEventOutbox().enqueue(event, route: "api/narrative-events", id: event.eventID) else {
             showError("端末への保存に失敗しました。App Group設定と空き容量を確認してください。"); return
         }

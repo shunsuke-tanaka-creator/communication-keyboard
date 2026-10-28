@@ -66,6 +66,19 @@ public final class ResearchAPIClient {
         }.resume()
     }
 
+    /// Observation heartbeat reports only what this process knows; it does not claim all-day coverage.
+    public func sendObservation(participantID: String, source: String, loggingEnabled: Bool?, questionsEnabled: Bool) {
+        guard let url = endpoint("api/heartbeats") else { return }
+        var body: [String: Any] = ["event_id": UUID().uuidString, "participant_id": participantID,
+                                 "occurred_at": ISO8601DateFormatter().string(from: Date()), "source": source,
+                                 "questions_enabled": questionsEnabled]
+        if let enabled = loggingEnabled { body["logging_enabled"] = enabled }
+        guard let data = try? JSONSerialization.data(withJSONObject: body) else { return }
+        var request = URLRequest(url: url); request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type"); request.httpBody = data
+        session.dataTask(with: request) { [self] _, _, _ in _ = self.isConfigured }.resume()
+    }
+
     /// 追加: サーバーの最新質問1件を取得する。無い・失敗は nil（main スレッドで返す）。
     public func fetchPendingQuestion(participantID: String,
                                      completion: @escaping (PendingQuestion?) -> Void) {

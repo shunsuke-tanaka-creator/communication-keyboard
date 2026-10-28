@@ -440,6 +440,7 @@ final class KeyboardViewController: UIInputViewController {
     /// 変更: 出題判定。サーバー（v0.1）の最新質問を優先し、未設定・無し・失敗ならローカル Trigger へフォールバックする。
     ///       安否確認が出ている間・機能OFF・既に質問表示中・Full Access 無しは何もしない（同時1問）。
     private func evaluateNarrativeTriggers() {
+        if hasFullAccess { clientObservation() }
         guard narrativeState.narrativeEnabled else { return } // 追加: 機能OFFなら早期リターン
         guard hasFullAccess else { return } // 追加: 研究機能は Full Access 必須
         guard pendingCheck == nil else { return } // 追加: 安否確認が出ている間は Narrative 質問を出さない
@@ -457,11 +458,24 @@ final class KeyboardViewController: UIInputViewController {
             guard let self else { return }
             guard self.currentPending == nil, !self.researchInputMode else { return } // 追加: 待っている間に表示された場合は出さない
             if let pending {
+                let now = Date()
+                // Never replace an answered/snoozed request while its answer is still queued offline.
+                guard !self.narrativeState.hasAnsweredRequest(pending.id) else { return }
+                if let until = self.narrativeState.snoozeUntil(kind: pending.kind), now < until { return }
+                if pending.kind == .currentState, self.narrativeState.lastRequestID != pending.id, let last = self.narrativeState.lastShown(kind: .currentState),
+                   now.timeIntervalSince(last) < 3 * 60 * 60 { return }
                 self.presentQuestion(pending, now: Date()) // 追加: サーバー質問を表示
             } else {
                 self.evaluateLocalNarrativeTriggers() // 追加: 無ければローカル
             }
         }
+    }
+
+    private func clientObservation() {
+        let isPrivate = sharedDefaults?.bool(forKey: SettingsKeys.privateModeEnabled) ?? false
+        ResearchAPIClient(baseURL: narrativeState.backendBaseURL).sendObservation(
+            participantID: narrativeState.participantID, source: "keyboard",
+            loggingEnabled: hasFullAccess && !isPrivate, questionsEnabled: narrativeState.narrativeEnabled)
     }
 
     /// 追加: ローカル Trigger による出題（Backend 未設定・未接続時も既存のお天気分質問を動かす）。
@@ -483,6 +497,7 @@ final class KeyboardViewController: UIInputViewController {
     private func presentQuestion(_ pending: PendingQuestion, now: Date) {
         var p = pending // 追加: questionShownAt を埋めるため可変にする
         p.questionShownAt = now // 追加: 表示時刻
+        narrativeState.lastRequestID = p.id
         currentPending = p // 追加: 回答保存で参照
         narrativeState.markShown(kind: p.kind, at: now) // 追加: cooldown 起点を記録
         keyboardView.showQuestion(p) // 追加: バナー表示（高さ64）
@@ -497,7 +512,7 @@ final class KeyboardViewController: UIInputViewController {
             handleActivityOption(option, pending: pending)
             return
         }
-        if pending.kind == .nightReflection {
+        if pending.kind == .nightReflection || pending.kind == .currentState {
             handleDailyReflectionOption(option, pending: pending)
             return
         }
@@ -534,7 +549,7 @@ final class KeyboardViewController: UIInputViewController {
 
     /// 追加: 夜の振り返りを5項目×5段階で進め、最後に JSON（{"mood":3,...}）を free_text として保存する。
     private func handleDailyReflectionOption(_ option: QuestionOption, pending: PendingQuestion) {
-        if option.value == "start_daily_reflection" {
+        if option.value == "start_daily_reflection" || option.value == "start_current_state" {
             dailyScaleAnswers.removeAll()
             dailyScaleIndex = 0
             showCurrentDailyScale()
@@ -555,7 +570,7 @@ final class KeyboardViewController: UIInputViewController {
         let json = jsonData.flatMap { String(data: $0, encoding: .utf8) }
         NSLog("[MFK-Narrative] daily reflection done answers=\(json ?? "-")") // 追加: デバッグ
         saveAnswer(pending: pending,
-                   answer: QuestionAnswer(label: "daily_reflection", freeText: json))
+                   answer: QuestionAnswer(label: pending.kind == .currentState ? "current_state" : "daily_reflection", freeText: json))
     }
 
     /// 追加: 夜の振り返りの現在項目を 1〜5 の選択肢で表示する（途中は「あとで」を出さない）。
@@ -569,7 +584,7 @@ final class KeyboardViewController: UIInputViewController {
             else { suffix = "" }
             return QuestionOption(label: "\(score)\(suffix)", value: "scale:\(item.key):\(score)")
         }
-        keyboardView.showQuestionOptions(prompt: "\(dailyScaleIndex + 1)/\(dailyScaleItems.count)  \(item.prompt)",
+        keyboardView.showQuestionOptions(prompt: "\(dailyScaleIndex + 1)/\(dailyScaleItems.count)  \(currentPending?.kind == .currentState ? item.prompt.replacingOccurrences(of: "今日の", with: "今の") : item.prompt)",
                                          options: options,
                                          allowFreeText: false,
                                          showSnooze: false)
@@ -599,6 +614,7 @@ final class KeyboardViewController: UIInputViewController {
         event.pmtt = narrativePMTT.link(event: event) // 追加: PMTT ノード対応付け
 
         narrativeRepo.save(event) // 追加: ローカル JSONL + リモート best-effort（throw しない）
+        narrativeState.markAnsweredRequest(pending.id)
         narrativeState.markAnswered(kind: pending.kind, on: now) // 追加: 当日回答済み・1日上限に反映
         narrativeState.updateTypingBaseline(with: typing) // 追加: 打鍵ベースライン更新
         NSLog("[MFK-Narrative] answer saved kind=\(pending.kind.rawValue) emotion=\(emotion) exp=\(experience)") // 追加: デバッグ

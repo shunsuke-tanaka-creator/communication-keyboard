@@ -12,6 +12,7 @@ import Foundation
 /// 質問の種別。JSON の question.kind としてそのまま保存される安定ラベル。
 public enum QuestionKind: String, Codable, CaseIterable {
     /// 朝の気分（当日初回キーボード表示・06:00-10:00）
+    case currentState
     case morningMood
     /// 今日の目標（朝、morningMood の後）
     case morningGoal

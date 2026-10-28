@@ -34,6 +34,11 @@ public enum QuestionCatalog {
                                     allowFreeText: true,
                                     cooldown: 0,
                                     maxPerDay: 1)
+        case .currentState:
+            return QuestionTemplate(kind: .currentState,
+                                    prompt: "今の状態（5項目・各5段階）を教えてください",
+                                    options: [QuestionOption(label: "回答を始める", value: "start_current_state")],
+                                    allowFreeText: false, cooldown: 3 * 60 * 60, maxPerDay: 5)
         case .nightReflection:
             // 変更: 夜の振り返りは 5項目×5段階（気分・疲労・ストレス・集中度・眠気）。
             //       この選択肢で開始し、各項目は KeyboardViewController.showCurrentDailyScale が順に出す。

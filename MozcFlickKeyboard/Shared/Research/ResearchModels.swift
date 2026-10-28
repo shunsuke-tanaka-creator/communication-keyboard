@@ -88,6 +88,12 @@ public struct ResearchDeviceContext: Codable {
     public var livingPresence: Bool?
     public var temperature: String?
     public var updatedAt: Date?
+    public var measurementUpdatedAt: [String: Date]?
+
+    public mutating func markMeasurement(_ key: String) {
+        if measurementUpdatedAt == nil { measurementUpdatedAt = [:] }
+        measurementUpdatedAt?[key] = Date()
+    }
 
     public init() {}
 
@@ -106,6 +112,7 @@ public struct ResearchDeviceContext: Codable {
         case livingPresence = "living_presence"
         case temperature
         case updatedAt = "updated_at"
+        case measurementUpdatedAt = "measurement_updated_at"
     }
 }
 

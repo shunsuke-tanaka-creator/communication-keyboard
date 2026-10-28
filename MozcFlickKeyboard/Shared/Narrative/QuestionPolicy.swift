@@ -51,7 +51,7 @@ public final class QuestionPolicy {
         // 変更: 手動由来・センサー由来以外は「当日既に回答済みなら出さない」（morningMood 等 maxPerDay=1 の制約もこれで満たす）。
         // 変更: 手動由来（外出先/外出評価）とセンサー由来（pendingKindQueue）は毎回新規事象なので免除し、
         //       種別ごとの回数は cooldown と 1日上限 maxQuestionsPerDay で間接的に抑える。
-        if !isManualKind(kind), !isSensorQueuedKind(kind), state.isAnswered(kind: kind, on: now) { return false }
+        if kind != .currentState, !isManualKind(kind), !isSensorQueuedKind(kind), state.isAnswered(kind: kind, on: now) { return false }
 
         // 追加: 種別 cooldown（前回表示から template.cooldown 秒経っていなければ出さない）。
         // 注意: センサー由来でも cooldown は免除しない（fatigueCheck は60分）。

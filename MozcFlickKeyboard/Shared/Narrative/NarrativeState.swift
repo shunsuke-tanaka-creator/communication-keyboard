@@ -66,6 +66,19 @@ public final class NarrativeState {
     /// 指定日の日付キー。
     private func dayKey(_ date: Date) -> String { dayFormatter.string(from: date) }
 
+    public var lastRequestID: String? {
+        get { defaults?.string(forKey: "research.lastRequestID") }
+        set { defaults?.set(newValue, forKey: "research.lastRequestID") }
+    }
+    public func hasAnsweredRequest(_ id: String) -> Bool {
+        (defaults?.stringArray(forKey: "research.answeredRequests") ?? []).contains(id)
+    }
+    public func markAnsweredRequest(_ id: String) {
+        var ids = defaults?.stringArray(forKey: "research.answeredRequests") ?? []
+        ids.removeAll { $0 == id }; ids.append(id)
+        defaults?.set(Array(ids.suffix(200)), forKey: "research.answeredRequests")
+    }
+
     // MARK: - 回答済み管理
 
     /// 指定日に指定種別を回答済みか。

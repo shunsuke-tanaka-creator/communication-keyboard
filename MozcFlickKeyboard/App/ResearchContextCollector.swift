@@ -26,6 +26,10 @@ final class ResearchContextCollector {
     /// 追加: 全 Context を取り直す。各取得は非同期で、取れた順に main で保存する。
     func refresh() {
         NSLog("[MFK-Research] context refresh start") // 追加: デバッグ
+        let state = NarrativeState()
+        ResearchAPIClient(baseURL: state.backendBaseURL).sendObservation(
+            participantID: state.participantID, source: "parent_app", loggingEnabled: nil,
+            questionsEnabled: state.narrativeEnabled)
         refreshBattery()
         refreshHealth()
         refreshCalendar()
@@ -46,6 +50,8 @@ final class ResearchContextCollector {
         contextStore.update { context in
             context.batteryLevel = level >= 0 ? level : nil
             context.batteryState = state
+            context.markMeasurement("battery_level")
+            context.markMeasurement("battery_state")
         }
     }
 
@@ -74,27 +80,27 @@ final class ResearchContextCollector {
 
             // 合計系（今日0時〜現在）
             self.fetchStat(type: self.stepType, unit: .count(), options: .cumulativeSum, start: todayStart) { v in
-                self.contextStore.update { $0.stepCount = v }
+                self.contextStore.update { $0.stepCount = v; $0.markMeasurement("step_count") }
             }
             self.fetchStat(type: self.distanceType, unit: .meter(), options: .cumulativeSum, start: todayStart) { v in
-                self.contextStore.update { $0.walkingDistanceM = v }
+                self.contextStore.update { $0.walkingDistanceM = v; $0.markMeasurement("walking_distance_m") }
             }
             self.fetchStat(type: self.flightsType, unit: .count(), options: .cumulativeSum, start: todayStart) { v in
-                self.contextStore.update { $0.flightsClimbed = v }
+                self.contextStore.update { $0.flightsClimbed = v; $0.markMeasurement("flights_climbed") }
             }
             self.fetchStat(type: self.energyType, unit: .kilocalorie(), options: .cumulativeSum, start: todayStart) { v in
-                self.contextStore.update { $0.activeEnergyKcal = v }
+                self.contextStore.update { $0.activeEnergyKcal = v; $0.markMeasurement("active_energy_kcal") }
             }
 
             // 平均系（直近1時間）
             self.fetchStat(type: self.speedType, unit: HKUnit.meter().unitDivided(by: .second()), options: .discreteAverage, start: lastHourStart) { v in
-                self.contextStore.update { $0.walkingSpeedMps = v }
+                self.contextStore.update { $0.walkingSpeedMps = v; $0.markMeasurement("walking_speed_mps") }
             }
             self.fetchStat(type: self.stepLengthType, unit: .meter(), options: .discreteAverage, start: lastHourStart) { v in
-                self.contextStore.update { $0.walkingStepLengthM = v }
+                self.contextStore.update { $0.walkingStepLengthM = v; $0.markMeasurement("walking_step_length_m") }
             }
             self.fetchStat(type: self.asymmetryType, unit: .percent(), options: .discreteAverage, start: lastHourStart) { v in
-                self.contextStore.update { $0.walkingAsymmetryPct = v.map { $0 * 100 } } // 追加: 0〜1 → %
+                self.contextStore.update { $0.walkingAsymmetryPct = v.map { $0 * 100 }; $0.markMeasurement("walking_asymmetry_pct") } // 追加: 0〜1 → %
             }
         }
     }
@@ -155,6 +161,6 @@ final class ResearchContextCollector {
             ResearchCalendarEvent(title: $0.title ?? "", start: $0.startDate, end: $0.endDate)
         }
         NSLog("[MFK-Research] Calendar events today=\(events.count)") // 追加: デバッグ
-        contextStore.update { $0.calendarEvents = events }
+        contextStore.update { $0.calendarEvents = events; $0.markMeasurement("calendar_events") }
     }
 }
