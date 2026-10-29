@@ -9,6 +9,8 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        ResearchNotificationCoordinator.shared.register()
+        LocationContextCollector.shared.restore()
         ResearchContextCollector.shared.startBackgroundDelivery() // 追加: HealthKit のバックグラウンド更新を開始（起動のたびに Observer を張り直す）
         return true
     }

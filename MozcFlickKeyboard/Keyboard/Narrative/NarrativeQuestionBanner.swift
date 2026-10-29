@@ -328,12 +328,12 @@ final class NarrativeQuestionBanner: UIView {
     private func weatherIconName(for value: String) -> String? {
         switch value {
         // --- 気分・評価（天気マーク） ---
-        case "good", "helpful", "yes": return "sun.max.fill"          // 追加: 晴れ（良い）
-        case "normal", "neutral": return "cloud.sun.fill"             // 追加: 晴れ時々曇り（普通）
+        case "happy", "good", "helpful", "yes": return "sun.max.fill"          // 追加: 晴れ（良い）
+        case "normal", "neutral": return "cloud.fill"             // 追加: 晴れ時々曇り（普通）
         case "slightly_tired": return "cloud.fill"                    // 追加: 曇り（少し疲れた）
         case "tired": return "cloud.drizzle.fill"                     // 追加: 小雨（疲れた）
-        case "bad", "not_helpful": return "cloud.rain.fill"           // 追加: 雨（悪い）
-        case "difficult": return "cloud.bolt.rain.fill"               // 追加: 荒天（大変だった）
+        case "sad", "bad", "not_helpful": return "cloud.rain.fill"           // 追加: 雨（悪い）
+        case "angry", "difficult": return "cloud.bolt.rain.fill"               // 追加: 荒天（大変だった）
         case "no": return "xmark.circle.fill"                         // 追加: いいえ
         // --- 行動・場所（天気ではないが統一感のためアイコンを出す） ---
         case "work", "working": return "briefcase.fill"               // 追加: 仕事

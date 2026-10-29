@@ -224,3 +224,7 @@ xcodebuild test \
 
 - 本プロジェクトのライセンス: [LICENSE](LICENSE)（BSD-3-Clause）
 - Mozc 由来部分・第三者ライブラリ: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照。
+
+## 生活の気づき研究版
+
+「生活の気づき」タブに天気4分類、親アプリからの状態回答、場所の自動分類、任意の質問通知と設定を追加しました。対応サーバーと組み合わせて利用します。[起動・Xcodeテスト・実機確認](docs/otenki-workflow.md) を参照してください。

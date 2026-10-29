@@ -14,7 +14,7 @@
 - Full Access が有効で、かつプライベートモードが OFF のとき、`SessionLogger` が入力イベントを記録します。Backend URL が設定されていれば、セッション終了ごとに本文を含むセッションを Mac へ送信します。
 - お天気分の回答と文脈イベントは、端末内の JSONL に保存したうえで永続キュー（`ResearchEventOutbox`）からMacへ送信します。失敗した分は次の同期で再送します。Mac側ではイベントIDで重複を防ぎます。
 - 送信先は設定した研究サーバーだけです。広告・解析SDK・クラウドAIには送信しません。通信は平文 HTTP です（`NSAllowsArbitraryLoads = true`）。Tailscale の経路暗号化を前提にしています。
-- `PrivacyInfo.xcprivacy` は本ドキュメントの内容に合わせてあります。ただし `project.yml` のどのターゲットにも含まれていないため、現状はアプリに同梱されていません。
+- `PrivacyInfo.xcprivacy` は本ドキュメントの内容に合わせてあります。研究版では `project.yml` のホストアプリのリソースとして同梱します。場所IDを用いる任意の外出研究機能も記載しています。
 
 ---
 

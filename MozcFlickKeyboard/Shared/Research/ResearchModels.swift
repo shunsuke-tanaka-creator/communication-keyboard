@@ -87,6 +87,7 @@ public struct ResearchDeviceContext: Codable {
     public var doorOpen: Bool?
     public var livingPresence: Bool?
     public var temperature: String?
+    public var measurementUpdatedAt: [String: Date]? = [:]
     public var updatedAt: Date?
 
     public init() {}
@@ -105,6 +106,7 @@ public struct ResearchDeviceContext: Codable {
         case doorOpen = "door_open"
         case livingPresence = "living_presence"
         case temperature
+        case measurementUpdatedAt = "measurement_updated_at"
         case updatedAt = "updated_at"
     }
 }

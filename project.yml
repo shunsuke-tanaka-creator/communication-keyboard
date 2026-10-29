@@ -88,6 +88,8 @@ targets:
     platform: iOS
     sources:
       - path: MozcFlickKeyboard/App
+      - path: PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - target: MozcFlickShared
       - target: MozcFlickKeyboardExtension
@@ -144,6 +146,9 @@ targets:
     platform: iOS
     sources:
       - path: Tests
+        excludes: [Fixtures]
+      - path: Tests/Fixtures
+        buildPhase: resources
       # Compile presentation/input orchestration into the test bundle for regression tests.
       - path: MozcFlickKeyboard/Keyboard/InputState.swift
       - path: MozcFlickKeyboard/Keyboard/Flick

@@ -60,5 +60,18 @@
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>滞在場所を名前のないクラスにまとめ、普段の外出パターンを研究します。座標は端末内で管理し、場所IDと時刻を研究サーバーへ送信します。</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>アプリを閉じている間の訪問・移動を記録し、外出パターンの変化を確認するために利用します。</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>location</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.tanaka05.MozcFlickKeyboard.research-refresh</string>
+	</array>
 </dict>
 </plist>
