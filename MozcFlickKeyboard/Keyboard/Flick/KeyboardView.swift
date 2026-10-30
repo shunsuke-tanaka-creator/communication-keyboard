@@ -25,15 +25,15 @@ enum KeyboardAppearance {
         }
     }
 
-    static let canvas = adaptive(0xE9EEF0, 0x151D23)
-    static let surface = adaptive(0xF3F6F7, 0x1D282F)
-    static let key = adaptive(0xFFFFFF, 0x303D46)
-    static let utilityKey = adaptive(0xDCE5E8, 0x233139)
-    static let ink = adaptive(0x243B45, 0xEDF4F6)
+    static let canvas = adaptive(0xD1D3D9, 0x202020)
+    static let surface = adaptive(0xD1D3D9, 0x202020)
+    static let key = adaptive(0xFFFFFF, 0x6B6B6B)
+    static let utilityKey = adaptive(0xADB3BD, 0x454545)
+    static let ink = adaptive(0x000000, 0xFFFFFF)
     static let secondaryInk = adaptive(0x526B76, 0xB0C3CD)
-    static let accent = adaptive(0x176D73, 0x91D7D3)
-    static let accentFill = adaptive(0x176D73, 0x286D73)
-    static let accentSoft = adaptive(0xD0E8E6, 0x34585D)
+    static let accent = adaptive(0x007AFF, 0x0A84FF)
+    static let accentFill = adaptive(0x007AFF, 0x0A84FF)
+    static let accentSoft = adaptive(0xB8BDC7, 0x858585)
     static let border = adaptive(0xCDDADE, 0x455660)
 
     static func styleButton(_ button: UIButton, title: String, symbol: String? = nil,
@@ -66,11 +66,21 @@ final class KeyboardView: UIView {
 
     /// 入力イベントの通知先。KeyboardViewController が実装する。
     weak var actionDelegate: KeyboardActionDelegate?
+    var onInputModeList: ((UIView, UIEvent) -> Void)?
+    @objc private func showInputModeList(_ sender: UIView, event: UIEvent) {
+        onInputModeList?(sender, event)
+    }
+    private func wireGlobe(_ button: FlickKeyButton) {
+        if button.keyDefinition.action == .nextKeyboard {
+            button.onAccessibilityActivate = { [weak self] in self?.actionDelegate?.keyboardDidTapNextKeyboard() }
+            button.addTarget(self, action: #selector(showInputModeList(_:event:)), for: .allTouchEvents)
+        }
+    }
 
     /// トグル入力 ON/OFF。
     var toggleInputEnabled = true
     /// フリックのみ入力 ON/OFF（中央タップは入力し、連打トグルを無効化）。
-    var flickOnlyEnabled = false
+    var flickOnlyEnabled = true
     /// 触覚フィードバック ON/OFF。
     var hapticsEnabled = true {
         didSet { applyHapticsSetting() }
@@ -78,6 +88,18 @@ final class KeyboardView: UIView {
 
     /// 現在の入力モード。
     private(set) var inputMode: InputMode = .hiragana
+
+    private var shiftEnabled = false
+    private var capsLocked = false
+    private var lastShiftTap: TimeInterval = -.infinity
+    private var manualShift = false
+    var returnTitle = "改行" { didSet { updateKeyLabels() } }
+
+    func updateCapitalization(_ uppercase: Bool) {
+        guard !capsLocked, !manualShift else { return }
+        shiftEnabled = uppercase
+        updateKeyLabels()
+    }
 
     // MARK: - サブビュー
 
@@ -264,7 +286,7 @@ final class KeyboardView: UIView {
             candidateList.leadingAnchor.constraint(equalTo: leadingAnchor),
             candidateList.trailingAnchor.constraint(equalTo: trailingAnchor),
             // 追加: 展開時にキー領域全体を覆うよう下端を親まで伸ばす（これが無いと高さが確保されず見えない）。
-            candidateList.bottomAnchor.constraint(equalTo: bottomAnchor),
+            candidateList.bottomAnchor.constraint(equalTo: infoBar.topAnchor),
 
             rootStack.topAnchor.constraint(equalTo: candidateBar.bottomAnchor, constant: 6),
             rootStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
@@ -297,13 +319,24 @@ final class KeyboardView: UIView {
         if result.candidates.isEmpty { setCandidateListVisible(false) }
     }
 
+    func setEnglishSuggestions(_ words: [String]) {
+        let candidates = words.enumerated().map { ConversionCandidate(id: "english:\($0.offset)", value: $0.element, reading: $0.element) }
+        candidateBar.setCandidates(candidates, focused: nil)
+        candidateList.setCandidates(candidates, focused: nil)
+        if candidates.isEmpty { setCandidateListVisible(false) }
+    }
+
     private func updateKeyLabels() {
         for button in keyButtons {
             switch button.keyDefinition.action {
+            case let .input(text):
+                button.setDisplayTitle(inputMode == .alphabet && shiftEnabled ? text.uppercased() : text)
+            case .shift:
+                button.setDisplayTitle(capsLocked ? "⇪" : (shiftEnabled ? "⬆" : "⇧"))
             case .space:
-                button.setDisplayTitle(displayedResult.composition.isEmpty ? "空白" : "変換")
+                button.setDisplayTitle(displayedResult.composition.isEmpty ? (inputMode == .alphabet ? "space" : "空白") : "変換")
             case .returnOrConfirm:
-                button.setDisplayTitle(displayedResult.composition.isEmpty ? "改行" : "確定")
+                button.setDisplayTitle(displayedResult.composition.isEmpty ? returnTitle : "確定")
             case .nextCandidate:
                 button.isEnabled = !displayedResult.composition.isEmpty
                 button.alpha = button.isEnabled ? 1 : 0.4
@@ -316,6 +349,7 @@ final class KeyboardView: UIView {
     func setInputMode(_ mode: InputMode) {
         guard mode != inputMode else { return }
         inputMode = mode
+        manualShift = false
         rebuildKeys()
     }
 
@@ -447,11 +481,44 @@ final class KeyboardView: UIView {
             rowStack.spacing = 6
 
             let rowKeys = layout.filter { $0.row == row }
+            if inputMode == .alphabet || inputMode == .number || inputMode == .symbol {
+                rowStack.spacing = 5
+                var previous: FlickKeyButton?
+                var previousWeight: CGFloat = 1
+                if row == 1 && inputMode == .alphabet {
+                    let spacer = UIView()
+                    rowStack.addArrangedSubview(spacer)
+                    spacer.widthAnchor.constraint(equalTo: rootStack.widthAnchor, multiplier: 0.045).isActive = true
+                }
+                for def in rowKeys {
+                    let button = FlickKeyButton(keyDefinition: def)
+                    button.delegate = self
+                    wireGlobe(button)
+                    button.hapticsEnabled = hapticsEnabled
+                    button.isRepeatable = def.action == .backspace
+                    keyButtons.append(button)
+                    rowStack.addArrangedSubview(button)
+                    let weight: CGFloat = def.action == .space ? 3.4 : (row == 3 && def.action == .returnOrConfirm ? 1.7 : (row == 2 && (def.action == .shift || def.action == .backspace) ? 1.4 : 1))
+                    if let previous {
+                        button.widthAnchor.constraint(equalTo: previous.widthAnchor, multiplier: weight / previousWeight).isActive = true
+                    }
+                    previous = button
+                    previousWeight = weight
+                }
+                if row == 1 && inputMode == .alphabet {
+                    let spacer = UIView()
+                    rowStack.addArrangedSubview(spacer)
+                    spacer.widthAnchor.constraint(equalTo: rootStack.widthAnchor, multiplier: 0.045).isActive = true
+                }
+                rootStack.addArrangedSubview(rowStack)
+                continue
+            }
             var cells: [UIView] = []
             for column in 0..<KeyLayout.columnCount {
                 if let def = rowKeys.first(where: { $0.column == column }) {
                     let button = FlickKeyButton(keyDefinition: def)
                     button.delegate = self
+                    wireGlobe(button)
                     button.hapticsEnabled = hapticsEnabled
                     button.displaysKatakana = inputMode == .katakana
                     if case .backspace = def.action { button.isRepeatable = true }
@@ -490,7 +557,19 @@ final class KeyboardView: UIView {
             emitKana(kanaKeyID: id, direction: direction)
 
         case let .input(text):
-            actionDelegate?.keyboardDidInput(kana: text)
+            let output = inputMode == .alphabet && shiftEnabled ? text.uppercased() : text
+            lastShiftTap = -.infinity
+            if !capsLocked { shiftEnabled = false; manualShift = false }
+            actionDelegate?.keyboardDidInput(kana: output)
+            updateKeyLabels()
+
+        case .shift:
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - lastShiftTap < 0.35 { capsLocked = true; shiftEnabled = true }
+            else { capsLocked = false; shiftEnabled.toggle() }
+            manualShift = true
+            lastShiftTap = now
+            updateKeyLabels()
 
         case .toggleDakuten:
             actionDelegate?.keyboardDidToggleDakuten()
@@ -505,7 +584,7 @@ final class KeyboardView: UIView {
             actionDelegate?.keyboardDidTapReturn()
 
         case .nextKeyboard:
-            actionDelegate?.keyboardDidTapNextKeyboard()
+            if onInputModeList == nil { actionDelegate?.keyboardDidTapNextKeyboard() }
 
         case .switchInputMode:
             let newMode = inputMode.next

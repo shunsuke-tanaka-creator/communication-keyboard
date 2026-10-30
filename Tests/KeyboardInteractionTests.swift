@@ -3,6 +3,24 @@ import UIKit
 @testable import MozcFlickShared
 
 final class PersonalizedEngineTests: XCTestCase {
+    func testKatakanaAlternativeCommitsWithoutSubmittingNativeID() {
+        let base = CandidateSpyEngine()
+        let engine = PersonalizedConversionEngine(base: base)
+        engine.insert("きょう")
+        XCTAssertTrue(engine.requestPrediction().candidates.contains { $0.id == "literal:katakana" })
+        _ = engine.selectCandidate(id: "literal:katakana")
+        XCTAssertEqual(engine.commit(), "キョウ")
+        XCTAssertNil(base.selectedID)
+    }
+    func testMultiSegmentConversionDoesNotMixWholePhraseReplacements() {
+        let entry = UserDictionaryEntry(reading: "はしはな", word: "橋と花")
+        let engine = PersonalizedConversionEngine(base: LocalStubEngine(), dictionaryEntries: { _ in [entry] })
+        engine.insert("はしはな")
+        let result = engine.requestConversion()
+        XCTAssertGreaterThan(result.segments.count, 1)
+        XCTAssertFalse(result.candidates.contains { $0.value == "橋と花" || $0.id.hasPrefix("literal:") })
+        XCTAssertEqual(engine.commit(), "橋花")
+    }
     func testLiteralDoesNotSelectNativeCandidateZero() {
         let base = CandidateSpyEngine()
         let engine = PersonalizedConversionEngine(base: base)
@@ -129,6 +147,7 @@ final class KeyboardInputStateTests: XCTestCase {
     func testToggleExpiresAndFlickDoesNotToggle() {
         var clock: TimeInterval = 0
         let state = InputState(engine: LocalStubEngine(), now: { clock })
+        state.flickOnlyEnabled = false
         state.input(kanaKeyID: "あ", direction: .center)
         clock = 0.1
         state.input(kanaKeyID: "あ", direction: .center)
@@ -155,6 +174,21 @@ final class KeyboardInputStateTests: XCTestCase {
         XCTAssertEqual(next.segments.first?.selected.value, "箸")
         XCTAssertEqual(next.composition, "はしはな")
         XCTAssertEqual(state.commit(), "箸花")
+    }
+    func testDeleteCancelsConversionBeforeDeletingReading() {
+        let state = InputState(engine: LocalStubEngine())
+        state.input(fixed: "きょう")
+        state.requestConversion()
+        let cancelled = state.deleteBackward()
+        XCTAssertFalse(cancelled.isConverting)
+        XCTAssertEqual(cancelled.composition, "きょう")
+        XCTAssertEqual(state.deleteBackward().composition, "きょ")
+    }
+    func testFlickOnlyIsDefault() {
+        let state = InputState(engine: LocalStubEngine())
+        state.input(kanaKeyID: "あ", direction: .center)
+        state.input(kanaKeyID: "あ", direction: .center)
+        XCTAssertEqual(state.commit(), "ああ")
     }
     func testCancelConversionPreservesReading() {
         let state = InputState(engine: LocalStubEngine())
@@ -201,7 +235,7 @@ final class KeyboardPresentationTests: XCTestCase {
             keyboard.layoutIfNeeded()
             for key in keys(keyboard) {
                 XCTAssertGreaterThanOrEqual(key.bounds.height, 44)
-                XCTAssertGreaterThanOrEqual(key.bounds.width, 44)
+                XCTAssertGreaterThanOrEqual(key.bounds.width, mode == .hiragana || mode == .katakana ? 44 : 24)
                 XCTAssertFalse(key.hasAmbiguousLayout)
             }
         }
@@ -214,6 +248,7 @@ final class KeyboardPresentationTests: XCTestCase {
         keyboard.flickKeyButton(english, didActivate: .center)
         XCTAssertEqual(delegate.mode, .alphabet)
         XCTAssertEqual(keyboard.inputMode, .alphabet)
+        keyboard.setInputMode(.hiragana)
         let next = try XCTUnwrap(keys(keyboard).first { $0.keyDefinition.action == .nextCandidate })
         keyboard.flickKeyButton(next, didActivate: .center)
         XCTAssertEqual(delegate.conversions, 1)
@@ -237,6 +272,38 @@ final class KeyboardPresentationTests: XCTestCase {
         keyboard.candidateList.onClose?()
         XCTAssertTrue(keyboard.candidateList.isHidden)
     }
+    func testEnglishShiftCapsLockAndCompleteAlphabet() throws {
+        let keyboard = KeyboardView()
+        let delegate = KeyboardDelegateSpy()
+        keyboard.actionDelegate = delegate
+        keyboard.setInputMode(.alphabet)
+        let letter = try XCTUnwrap(keys(keyboard).first { $0.keyDefinition.action == .input("q") })
+        let shift = try XCTUnwrap(keys(keyboard).first { $0.keyDefinition.action == .shift })
+        keyboard.flickKeyButton(letter, didActivate: .center)
+        keyboard.flickKeyButton(shift, didActivate: .center)
+        keyboard.flickKeyButton(letter, didActivate: .center)
+        keyboard.flickKeyButton(letter, didActivate: .center)
+        XCTAssertEqual(delegate.text, ["q", "Q", "q"])
+        keyboard.flickKeyButton(shift, didActivate: .center)
+        keyboard.flickKeyButton(shift, didActivate: .center)
+        keyboard.flickKeyButton(letter, didActivate: .center)
+        keyboard.flickKeyButton(letter, didActivate: .center)
+        XCTAssertEqual(Array(delegate.text.suffix(2)), ["Q", "Q"])
+        let letters = KeyLayout.alphabetLayout().compactMap { key -> String? in
+            if case let .input(text) = key.action { return text }; return nil
+        }
+        XCTAssertEqual(Set(letters), Set("abcdefghijklmnopqrstuvwxyz".map(String.init)))
+    }
+    func testReturnTraitAndEnglishSuggestionsDoNotCreateComposition() throws {
+        let keyboard = KeyboardView()
+        keyboard.setInputMode(.alphabet)
+        keyboard.returnTitle = "検索"
+        keyboard.setEnglishSuggestions(["hello"])
+        let enter = try XCTUnwrap(keys(keyboard).first { $0.keyDefinition.action == .returnOrConfirm })
+        let space = try XCTUnwrap(keys(keyboard).first { $0.keyDefinition.action == .space })
+        XCTAssertEqual(enter.accessibilityLabel, "検索")
+        XCTAssertEqual(space.accessibilityLabel, "space")
+    }
     func testCenterTapIsForwardedInFlickOnlyMode() throws {
         let keyboard = KeyboardView()
         let delegate = KeyboardDelegateSpy()
@@ -259,6 +326,7 @@ final class KeyboardPresentationTests: XCTestCase {
 }
 
 private final class KeyboardDelegateSpy: KeyboardActionDelegate {
+    var text: [String] = []
     var mode: InputMode?
     var conversions = 0
     var returns = 0
@@ -267,7 +335,7 @@ private final class KeyboardDelegateSpy: KeyboardActionDelegate {
     var cursorEvents: [Int] = []
     func keyboardDidInputKey(keyID: String, direction: FlickDirection) { kanaKey = keyID; self.direction = direction }
     func keyboardWillBeginCursorControl() -> Bool { cursorEvents.append(0); return true }
-    func keyboardDidInput(kana: String) {}
+    func keyboardDidInput(kana: String) { text.append(kana) }
     func keyboardDidPressKey(keyID: String, direction: String) {}
     func keyboardDidDeleteBackward() {}
     func keyboardDidToggleDakuten() {}

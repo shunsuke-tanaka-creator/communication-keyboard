@@ -30,6 +30,7 @@ protocol FlickKeyButtonDelegate: AnyObject {
 final class FlickKeyButton: UIControl {
 
     weak var delegate: FlickKeyButtonDelegate?
+    var onAccessibilityActivate: (() -> Void)?
 
     /// このキーの定義。
     let keyDefinition: KeyDefinition
@@ -110,7 +111,7 @@ final class FlickKeyButton: UIControl {
     }
 
     private var isPrimaryKey: Bool {
-        if case .returnOrConfirm = keyDefinition.action { return keyDefinition.row == 2 }
+        if case .returnOrConfirm = keyDefinition.action { return false }
         return false
     }
 
@@ -202,6 +203,13 @@ final class FlickKeyButton: UIControl {
         accessibilityTraits = .keyboardKey
     }
 
+    override func accessibilityActivate() -> Bool {
+        guard isEnabled else { return false }
+        if let onAccessibilityActivate { onAccessibilityActivate() }
+        else { delegate?.flickKeyButton(self, didActivate: .center) }
+        return true
+    }
+
     // MARK: - タッチ処理
 
     override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
@@ -247,6 +255,7 @@ final class FlickKeyButton: UIControl {
             }
             return true
         }
+        guard keyDefinition.kanaKey != nil else { return true }
         let velocity = CGPoint(x: delta.x / elapsed, y: delta.y / elapsed)
         let dir = FlickGesture.direction(translation: translation, velocity: velocity,
             thresholds: thresholds, previousDirection: currentDirection)
@@ -306,9 +315,11 @@ final class FlickKeyButton: UIControl {
         while let view = host, !(view is KeyboardView) { host = view.superview }
         guard let host else { return }
         let rect = convert(bounds, to: host)
-        let width = min(170, host.bounds.width - 8)
-        guideView.frame = CGRect(x: min(max(4, rect.midX - width / 2), host.bounds.width - width - 4),
-                                 y: max(2, rect.minY - 46), width: width, height: 42)
+        let cell = min(rect.width, rect.height * 0.75, 44)
+        let size = cell * 3
+        guideView.frame = CGRect(x: rect.midX - size / 2,
+                                 y: rect.midY - size / 2, width: size, height: size)
+        guideView.layer.zPosition = 100
         host.addSubview(guideView)
         guideView.setActive(true)
         guideView.highlight(.center)
@@ -381,7 +392,7 @@ final class FlickGuideView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = false
-        backgroundColor = KeyboardAppearance.surface
+        backgroundColor = .clear
         layer.cornerRadius = 9
         layer.shadowColor = UIColor.black.cgColor
         layer.shadowOpacity = 0.15
@@ -400,26 +411,25 @@ final class FlickGuideView: UIView {
     required init?(coder: NSCoder) { return nil }
     override func layoutSubviews() {
         super.layoutSubviews()
-        let width = (bounds.width - 8) / 5
-        for (index, direction) in directions.enumerated() {
-            labels[direction]?.frame = CGRect(x: 4 + CGFloat(index) * width, y: 3, width: width - 2, height: bounds.height - 6)
+        let cell = bounds.width / 3
+        let positions: [FlickDirection: CGPoint] = [.left: CGPoint(x: 0, y: 1), .up: CGPoint(x: 1, y: 0),
+            .center: CGPoint(x: 1, y: 1), .down: CGPoint(x: 1, y: 2), .right: CGPoint(x: 2, y: 1)]
+        for (direction, position) in positions {
+            labels[direction]?.frame = CGRect(x: position.x * cell, y: position.y * cell, width: cell, height: cell)
         }
     }
     func configure(with key: KanaKey?, katakana: Bool = false) {
-        let arrows: [FlickDirection: String] = [.left: "←", .up: "↑", .center: "•", .down: "↓", .right: "→"]
         for direction in directions {
             let character = key?.character(for: direction) ?? ""
-            let text = NSMutableAttributedString(string: (arrows[direction] ?? "") + "\n",
-                attributes: [.font: UIFont.systemFont(ofSize: 9, weight: .medium)])
-            text.append(NSAttributedString(string: katakana ? KanaTransform.toKatakana(character) : character,
-                attributes: [.font: UIFont.systemFont(ofSize: 18, weight: .medium)]))
-            labels[direction]?.attributedText = text
+            labels[direction]?.text = katakana ? KanaTransform.toKatakana(character) : character
+            labels[direction]?.font = .systemFont(ofSize: 22)
+            labels[direction]?.adjustsFontSizeToFitWidth = true
         }
     }
     func setActive(_ active: Bool) { isHidden = !active }
     func highlight(_ direction: FlickDirection) {
         for (key, label) in labels {
-            label.backgroundColor = key == direction ? KeyboardAppearance.accentFill : .clear
+            label.backgroundColor = key == direction ? KeyboardAppearance.accentFill : KeyboardAppearance.key
             label.textColor = key == direction ? .white : KeyboardAppearance.ink
         }
     }

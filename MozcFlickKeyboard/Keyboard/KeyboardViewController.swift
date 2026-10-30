@@ -69,8 +69,7 @@ final class KeyboardViewController: UIInputViewController {
     private let sharedDefaults = UserDefaults(suiteName: AppConfig.appGroupID)
 
     /// 追加: いま入力欄へインライン挿入している未確定文字列（擬似 marked text）。
-    /// UITextDocumentProxy に marked text API が無いため、未確定よみを実挿入して Simeji 風に見せる。
-    /// composition が変わるたびにこの値との差分を取り、古い分を削除して新しい分を入れ直す。
+    /// UIKit の marked text に対応する現在の表示文字列。確定時は unmarkText する。
     private var pendingComposition = ""
 
     /// 追加: 入力イベントをセッション単位で記録するロガー。
@@ -159,12 +158,20 @@ final class KeyboardViewController: UIInputViewController {
 
     override func viewWillLayoutSubviews() {
         super.viewWillLayoutSubviews()
+        let landscape = view.window?.windowScene?.interfaceOrientation.isLandscape == true
+        let height: CGFloat = landscape ? 250 : 290
+        if keyboardBaseHeight != height {
+            let extra = (keyboardHeightConstraint?.constant ?? keyboardBaseHeight) - keyboardBaseHeight
+            keyboardBaseHeight = height
+            keyboardHeightConstraint?.constant = height + max(0, extra)
+        }
     }
 
     // 変更: キーボードを開いたときに「次の予定」を1回だけ表示する（時刻トリガーはやめた）。
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
         applySettings()
+        refreshInputTraits()
         if currentPending?.expiresAt.map({ $0 <= Date() }) ?? false { dismissBanner() }
         updateInfoBar()
         startCheckTimer() // 追加: 表示中は1分間隔で予定を再判定する。
@@ -199,6 +206,7 @@ final class KeyboardViewController: UIInputViewController {
     /// 追加: キーボードが閉じたらセッションを終了しファイルを閉じる。
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
+        abandonComposition()
         stopCheckTimer() // 追加: 表示中のみ稼働するタイマーを止める。
         sessionLogger.log(type: "meta", data: ["conversionCount": "\(conversionCount)"])
         sessionLogger.stop(reason: "keyboard_hidden") // 変更: 終了理由を付けて閉じる（送信コールバックが走る）
@@ -303,8 +311,88 @@ final class KeyboardViewController: UIInputViewController {
 
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
-        // keyboardType / returnKeyType に応じて UI を切り替えられるフック。
-        // 数字・電話・URL 入力欄などでは変換を無効化するのが自然（今後の拡張点）。
+        if let document = compositionDocumentID, document != textDocumentProxy.documentIdentifier { abandonComposition() }
+        refreshInputTraits()
+    }
+
+    private var englishSuggestions: [String] = []
+    private var englishSuggestionPrefix = ""
+    private func refreshEnglishSuggestions() {
+        englishSuggestions = []
+        englishSuggestionPrefix = ""
+        guard keyboardView.inputMode == .alphabet else { return }
+        guard !researchInputMode, textDocumentProxy.keyboardType != .emailAddress,
+              textDocumentProxy.keyboardType != .URL,
+              let context = textDocumentProxy.documentContextBeforeInput else {
+            keyboardView.setEnglishSuggestions([]); return
+        }
+        let word = String(context.reversed().prefix { $0.isASCII && ($0.isLetter || $0 == "'") }.reversed())
+        englishSuggestionPrefix = word
+        if word.count >= 2 {
+            let checker = UITextChecker()
+            let range = NSRange(location: 0, length: (word as NSString).length)
+            let guesses = checker.completions(forPartialWordRange: range, in: word, language: "en_US") ?? []
+            var seen = Set<String>()
+            englishSuggestions = Array(guesses.filter { $0 != word && seen.insert($0).inserted }.prefix(8))
+        }
+        keyboardView.setEnglishSuggestions(englishSuggestions)
+    }
+
+    private var traitsDocumentID: UUID?
+    private func refreshInputTraits() {
+        let document = textDocumentProxy.documentIdentifier
+        if traitsDocumentID != document && !researchInputMode {
+            traitsDocumentID = document
+            let mode: InputMode?
+            switch textDocumentProxy.keyboardType ?? .default {
+            case .emailAddress, .URL, .asciiCapable, .twitter, .webSearch: mode = .alphabet
+            case .numberPad, .decimalPad, .phonePad, .asciiCapableNumberPad: mode = .number
+            default: mode = nil
+            }
+            if let mode {
+                if !pendingComposition.isEmpty { abandonComposition() }
+                keyboardView.setInputMode(mode)
+                inputState.setInputMode(mode)
+            }
+        }
+        refreshEnglishSuggestions()
+        let titles: [UIReturnKeyType: String] = [.search: "検索", .send: "送信", .go: "開く", .done: "完了", .next: "次へ", .join: "接続", .continue: "続ける"]
+        keyboardView.returnTitle = titles[textDocumentProxy.returnKeyType ?? .default] ?? "改行"
+        keyboardView.overrideUserInterfaceStyle = textDocumentProxy.keyboardAppearance == .dark ? .dark : .unspecified
+        let defaults = UserDefaults(suiteName: AppConfig.appGroupID)
+        guard defaults?.object(forKey: "englishAutoCapitalizationEnabled") as? Bool ?? true else {
+            keyboardView.updateCapitalization(false); return
+        }
+        let context = researchInputMode ? researchDraft : (textDocumentProxy.documentContextBeforeInput ?? "")
+        let type = textDocumentProxy.keyboardType ?? .default
+        if type == .emailAddress || type == .URL { keyboardView.updateCapitalization(false); return }
+        let capitalization = textDocumentProxy.autocapitalizationType ?? .sentences
+        let trimmed = context.trimmingCharacters(in: .whitespaces)
+        let upper: Bool
+        switch capitalization {
+        case .allCharacters: upper = true
+        case .words: upper = context.isEmpty || context.last?.isWhitespace == true
+        case .sentences: upper = context.isEmpty || trimmed.isEmpty || trimmed.last == "\n" ||
+            (context.last?.isWhitespace == true && [".", "!", "?"].contains(String(trimmed.last ?? " ")))
+        default: upper = false
+        }
+        keyboardView.updateCapitalization(upper)
+    }
+
+    private func correctEnglishWordIfEnabled() {
+        let defaults = UserDefaults(suiteName: AppConfig.appGroupID)
+        guard defaults?.bool(forKey: "englishAutocorrectionEnabled") == true,
+              textDocumentProxy.autocorrectionType != .no,
+              textDocumentProxy.keyboardType != .emailAddress, textDocumentProxy.keyboardType != .URL,
+              let context = textDocumentProxy.documentContextBeforeInput else { return }
+        let word = String(context.reversed().prefix { $0.isASCII && ($0.isLetter || $0 == "'") }.reversed())
+        guard word.count > 1, word != word.uppercased() else { return }
+        let checker = UITextChecker()
+        let range = NSRange(location: 0, length: (word as NSString).length)
+        let misspelled = checker.rangeOfMisspelledWord(in: word, range: range, startingAt: 0, wrap: false, language: "en_US")
+        guard misspelled == range, let replacement = checker.guesses(forWordRange: range, in: word, language: "en_US")?.first else { return }
+        for _ in word { textDocumentProxy.deleteBackward() }
+        textDocumentProxy.insertText(replacement)
     }
 
     // MARK: - UI 構築
@@ -312,6 +400,9 @@ final class KeyboardViewController: UIInputViewController {
     private func setupKeyboardView() {
         keyboardView.translatesAutoresizingMaskIntoConstraints = false
         keyboardView.actionDelegate = self
+        keyboardView.onInputModeList = { [weak self] sender, event in
+            self?.handleInputModeList(from: sender, with: event)
+        }
         view.addSubview(keyboardView)
 
         let guide = view.safeAreaLayoutGuide // SafeArea 考慮
@@ -346,7 +437,7 @@ final class KeyboardViewController: UIInputViewController {
         let d = sharedDefaults
         // 既定値: トグル ON / フリックのみ OFF / 学習 ON。
         let toggle = d?.object(forKey: SettingsKeys.toggleInputEnabled) as? Bool ?? true
-        let flickOnly = d?.bool(forKey: SettingsKeys.flickOnlyEnabled) ?? false
+        let flickOnly = d?.object(forKey: SettingsKeys.flickOnlyEnabled) as? Bool ?? true
         inputState.toggleInputEnabled = toggle
         inputState.flickOnlyEnabled = flickOnly
         let learning = d?.object(forKey: SettingsKeys.learningEnabled) as? Bool ?? true
@@ -366,60 +457,56 @@ final class KeyboardViewController: UIInputViewController {
 
     // MARK: - 反映ヘルパ
 
-    /// 追加: 未確定文字列を入力欄へインライン反映する（擬似 marked text）。
-    /// 変換前は composition(よみ)、変換中は選択中の文節列(変換後文字列)を表示対象にする。
-    /// 現在挿入済みの pendingComposition と新しい表示文字列の共通プレフィックスを残し、
-    /// 差分だけ削除・挿入して Simeji 風のインライン未確定表示を実現する。
-    /// UI（候補バー等）の update も併せて行う。
+    /// Keep Japanese preedit in the host's marked range; never erase surrounding text
+    /// by guessing its length. UIKit ranges use UTF-16, not Swift Character counts.
+    private var isUpdatingMarkedText = false
+    private var compositionDocumentID: UUID?
+
     private func syncInline(_ result: ConversionResult) {
-        // 変更: 変換中は選択中の文節列を結合した変換後文字列をインライン表示する。
-        let new: String
-        if result.isConverting && !result.segments.isEmpty {
-            new = result.segments.map { $0.selected.value }.joined()
-        } else {
-            new = result.composition
-        }
-        let old = pendingComposition
-        if new != old {
-            // 共通プレフィックス長を求める。
-            var common = 0
-            let newChars = Array(new)
-            let oldChars = Array(old)
-            while common < newChars.count && common < oldChars.count && newChars[common] == oldChars[common] {
-                common += 1
-            }
-            // 共通部分より後ろの古い分を削除。
-            for _ in 0..<(oldChars.count - common) {
-                textDocumentProxy.deleteBackward()
-            }
-            // 新しい分を挿入。
-            let inserted = String(newChars[common...])
-            if !inserted.isEmpty {
-                textDocumentProxy.insertText(inserted)
-            }
-            pendingComposition = new
-            NSLog("[MFK] syncInline old='\(old)' -> new='\(new)'") // 追加: インライン同期のデバッグ
-        }
+        let text = result.isConverting && !result.segments.isEmpty
+            ? result.segments.map { $0.selected.value }.joined() : result.composition
+        isUpdatingMarkedText = true
+        defer { isUpdatingMarkedText = false }
+        compositionDocumentID = textDocumentProxy.documentIdentifier
+        pendingComposition = text
+        textDocumentProxy.setMarkedText(text, selectedRange: NSRange(location: text.utf16.count, length: 0))
+        if text.isEmpty { textDocumentProxy.unmarkText(); compositionDocumentID = nil }
         keyboardView.update(with: result)
     }
 
-    /// 確定文字列を proxy へ送り、UI を初期状態へ戻す。
     private func commitAndInsert() {
-        // インライン挿入済みの未確定分をいったん削除してから確定文字列を入れ直す。
-        let deleteCount = pendingComposition.count
-        for _ in 0..<deleteCount {
-            textDocumentProxy.deleteBackward()
+        guard compositionDocumentID == nil || compositionDocumentID == textDocumentProxy.documentIdentifier else {
+            abandonComposition(); return
         }
-        NSLog("[MFK] commitAndInsert pending='\(pendingComposition)' deleted=\(deleteCount)") // 追加: 未確定削除のデバッグ
-        pendingComposition = ""
         let text = inputState.commit()
-        NSLog("[MFK] commitAndInsert text='\(text)'") // 追加: 確定文字列のデバッグ
-        sessionLogger.log(type: "commit", data: ["text": text]) // 追加: 確定文字列を記録
-        if !text.isEmpty {
-            textDocumentProxy.insertText(text)
+        isUpdatingMarkedText = true
+        defer { isUpdatingMarkedText = false }
+        if !pendingComposition.isEmpty || !text.isEmpty {
+            textDocumentProxy.setMarkedText(text, selectedRange: NSRange(location: text.utf16.count, length: 0))
+            textDocumentProxy.unmarkText()
         }
-        logContext() // 追加: 確定後のカーソル付近文脈を記録
+        pendingComposition = ""
+        compositionDocumentID = nil
+        sessionLogger.log(type: "commit", data: ["text": text])
+        logContext()
         keyboardView.update(with: .empty)
+    }
+
+    /// External cursor/field changes end the old composition without deleting text.
+    private func abandonComposition() {
+        guard !isUpdatingMarkedText else { return }
+        isUpdatingMarkedText = true
+        defer { isUpdatingMarkedText = false }
+        if compositionDocumentID == textDocumentProxy.documentIdentifier { textDocumentProxy.unmarkText() }
+        inputState.reset()
+        pendingComposition = ""
+        compositionDocumentID = nil
+        keyboardView.update(with: .empty)
+    }
+
+    override func selectionWillChange(_ textInput: UITextInput?) {
+        super.selectionWillChange(textInput)
+        if !pendingComposition.isEmpty { abandonComposition() }
     }
 
     /// 追加: カーソル付近の文脈（前後テキスト・選択テキスト）をログへ記録するヘルパ。
@@ -790,6 +877,15 @@ extension KeyboardViewController: KeyboardActionDelegate {
             appendResearchText(kana) // 追加: 下書きへ追記
             return // 追加: 通常入力経路へ進ませない
         }
+        if keyboardView.inputMode == .alphabet || keyboardView.inputMode == .number || keyboardView.inputMode == .symbol {
+            typingMetrics.recordKeystroke(at: Date())
+            if !inputState.currentResult.composition.isEmpty { commitAndInsert() }
+            textDocumentProxy.insertText(kana)
+            sessionLogger.log(type: "kana", data: ["kana": kana, "input_mode": String(describing: keyboardView.inputMode)])
+            logContext()
+            refreshInputTraits()
+            return
+        }
         typingMetrics.recordKeystroke(at: Date()) // 追加: 打鍵を集計（本文は渡さず時刻のみ）
         if inputState.currentResult.isConverting { commitAndInsert() }
         let result = inputState.input(fixed: kana)
@@ -811,6 +907,7 @@ extension KeyboardViewController: KeyboardActionDelegate {
     }
 
     func keyboardDidDeleteBackward() {
+        defer { refreshInputTraits() }
         // 追加: 研究入力モード中は researchDraft を1文字削るだけ（proxy / inputState には触れない）。
         if researchInputMode {
             deleteResearchText() // 追加: 下書き末尾を削除
@@ -833,12 +930,18 @@ extension KeyboardViewController: KeyboardActionDelegate {
     }
 
     func keyboardDidToggleDakuten() {
+        if researchInputMode {
+            if let last = researchDraft.last { deleteResearchText(); appendResearchText(KanaTransform.cycled(String(last))) }
+            return
+        }
+        if inputState.currentResult.isConverting { syncInline(inputState.cancelConversion()); return }
         let result = inputState.toggleDakuten()
         sessionLogger.log(type: "dakuten", data: ["composition": result.composition]) // 追加: 濁点トグルを記録
         syncInline(result) // 変更: 未確定を入力欄へインライン反映
     }
 
     func keyboardDidRequestConversion() {
+        guard !researchInputMode, !inputState.currentResult.composition.isEmpty else { return }
         let result = inputState.requestConversion()
         conversionCount += 1 // 追加: 変換回数カウント
         // 追加: 変換要求とその結果（候補一覧・文節）を記録。
@@ -852,6 +955,17 @@ extension KeyboardViewController: KeyboardActionDelegate {
     }
 
     func keyboardDidSelectCandidate(id: String) {
+        if keyboardView.inputMode == .alphabet {
+            guard !researchInputMode, id.hasPrefix("english:"), let index = Int(id.dropFirst(8)),
+                  englishSuggestions.indices.contains(index), !englishSuggestionPrefix.isEmpty,
+                  textDocumentProxy.documentContextBeforeInput?.hasSuffix(englishSuggestionPrefix) == true else { return }
+            let word = englishSuggestions[index]
+            for _ in englishSuggestionPrefix { textDocumentProxy.deleteBackward() }
+            textDocumentProxy.insertText(word)
+            sessionLogger.log(type: "candidate", data: ["id": id, "selected": word, "input_mode": "alphabet"])
+            refreshInputTraits()
+            return
+        }
         guard !researchInputMode, inputState.currentResult.candidates.contains(where: { $0.id == id }) else { return }
         // 候補選択 → その状態で確定して proxy へ挿入。
         let result = inputState.selectCandidate(id: id)
@@ -882,7 +996,9 @@ extension KeyboardViewController: KeyboardActionDelegate {
         if inputState.currentResult.composition.isEmpty {
             // 未確定が無ければ空白を直接入力。
             sessionLogger.log(type: "space", data: [:]) // 追加: 空白入力を記録
+            if keyboardView.inputMode == .alphabet { correctEnglishWordIfEnabled() }
             textDocumentProxy.insertText(" ")
+            refreshInputTraits()
             logContext() // 追加: 空白入力後のカーソル付近文脈を記録
         } else {
             // 未確定があれば変換を要求（一般的な IME の挙動）。
@@ -898,6 +1014,7 @@ extension KeyboardViewController: KeyboardActionDelegate {
     }
 
     func keyboardDidTapReturn() {
+        defer { refreshInputTraits() }
         // 追加: 研究入力モード中は改行を下書きへ追記（proxy には触れない）。
         if researchInputMode {
             appendResearchText("\n") // 追加: 下書きへ改行追記
@@ -929,6 +1046,7 @@ extension KeyboardViewController: KeyboardActionDelegate {
     func keyboardDidChangeInputMode(_ mode: InputMode) {
         if !researchInputMode && !inputState.currentResult.composition.isEmpty { commitAndInsert() }
         inputState.setInputMode(mode)
+        refreshInputTraits()
         sessionLogger.log(type: "inputMode", data: ["mode": "\(mode)"])
     }
 
