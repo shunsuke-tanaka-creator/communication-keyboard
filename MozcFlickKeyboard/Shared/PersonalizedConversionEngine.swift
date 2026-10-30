@@ -75,7 +75,7 @@ public final class PersonalizedConversionEngine: JapaneseConversionEngine {
 
     public func commit() -> String {
         let text = directCommit ?? base.commit()
-        if let selected, !text.isEmpty, selected.id != "literal:reading" {
+        if let selected, !text.isEmpty, !selected.id.hasPrefix("literal:") {
             recordSelection(selected.reading, selected.value)
         }
         // commit() clears the base composition without discarding its context/history.
@@ -91,6 +91,12 @@ public final class PersonalizedConversionEngine: JapaneseConversionEngine {
         selected = nil
         directCandidates = [:]
         guard !result.composition.isEmpty else { latest = result; return result }
+        // Native conversion candidates apply to the focused segment. Mixing a whole-reading
+        // dictionary/literal replacement into that list can silently discard other segments.
+        if result.isConverting && result.segments.count > 1 {
+            latest = result
+            return result
+        }
         let reading = ReadingNormalizer.normalize(result.composition)
         let entries = dictionaryEntries(reading).filter {
             $0.isEnabled && (result.isConverting ? ReadingNormalizer.normalize($0.reading) == reading : ReadingNormalizer.normalize($0.reading).hasPrefix(reading))
@@ -118,6 +124,15 @@ public final class PersonalizedConversionEngine: JapaneseConversionEngine {
         if !candidates.contains(where: { $0.value == literal.value }) {
             candidates.append(literal)
             directCandidates[literal.id] = literal
+        }
+        // Explicit script alternatives let the user confirm a name/product spelling
+        // without switching layout or accidentally submitting native candidate zero.
+        let katakana = KanaTransform.toKatakana(result.composition)
+        if katakana != result.composition && !candidates.contains(where: { $0.value == katakana }) {
+            let candidate = ConversionCandidate(id: "literal:katakana", value: katakana,
+                reading: result.composition, description: "カタカナ")
+            candidates.append(candidate)
+            directCandidates[candidate.id] = candidate
         }
         latest = ConversionResult(composition: result.composition, segments: result.segments,
             candidates: candidates, focusedSegment: result.focusedSegment, isConverting: result.isConverting)
