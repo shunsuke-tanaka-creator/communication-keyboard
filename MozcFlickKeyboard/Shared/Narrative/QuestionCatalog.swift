@@ -13,17 +13,20 @@ public enum QuestionCatalog {
     /// 指定種別のテンプレートを返す。
     public static func template(for kind: QuestionKind) -> QuestionTemplate {
         switch kind {
-        case .morningMood:
-            // 朝の気分: 1日1回だけ
-            return QuestionTemplate(kind: .morningMood,
-                                    prompt: "今朝の気分はどうですか？",
-                                    options: [QuestionOption(label: "良い", value: "good"),
-                                              QuestionOption(label: "普通", value: "normal"),
-                                              QuestionOption(label: "少し疲れた", value: "slightly_tired"),
-                                              QuestionOption(label: "悪い", value: "bad")],
-                                    allowFreeText: false,
-                                    cooldown: 0,
-                                    maxPerDay: 1)
+        case .morningMood, .weatherMood:
+            return QuestionTemplate(kind: kind, prompt: "今の気分を天気でいうと？",
+                options: WeatherMood.allCases.map { QuestionOption(label: $0.label, value: $0.rawValue) },
+                allowFreeText: false, cooldown: 3 * 3600, maxPerDay: 1)
+        case .currentState:
+            return QuestionTemplate(kind: kind, prompt: "今の状態を教えてください",
+                options: [QuestionOption(label: "回答を始める", value: "start_current_state")],
+                allowFreeText: false, cooldown: 3 * 3600, maxPerDay: 2)
+        case .typingReason:
+            return QuestionTemplate(kind: kind, prompt: "入力の修正が増えています。主な理由は？",
+                options: [("誤入力","mistype"),("文章を考え直した","rewrite"),("変換が合わない","conversion"),("わからない","unknown")].map { QuestionOption(label: $0.0, value: $0.1) },
+                allowFreeText: false, cooldown: 3600, maxPerDay: 2)
+        case .supportOutcome:
+            return QuestionTemplate(kind: kind, prompt: "先ほどの提案はどうでしたか？", options: [], allowFreeText: false, cooldown: 3600, maxPerDay: 2)
         case .morningGoal:
             // 今日の目標: 1日1回、自由記述あり
             return QuestionTemplate(kind: .morningGoal,
@@ -136,7 +139,7 @@ public enum QuestionCatalog {
 /// 出題ロジックのハイパーパラメータ。計画で確定した値をここだけに書く。
 public enum NarrativeConfig {
     /// 1日あたりの最大出題数。
-    public static let maxQuestionsPerDay: Int = 5
+    public static let maxQuestionsPerDay: Int = 4
     /// 朝トリガーの有効時間帯（6:00〜10:59 の「時」）。
     public static let morningHours: ClosedRange<Int> = 6...10
     /// 変更: 夜トリガーの開始「時」（v0.1 仕様で 21:00 → 22:00 以降）。

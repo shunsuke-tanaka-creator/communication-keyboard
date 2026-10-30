@@ -46,6 +46,7 @@ final class ResearchContextCollector {
         contextStore.update { context in
             context.batteryLevel = level >= 0 ? level : nil
             context.batteryState = state
+            context.measurementUpdatedAt = (context.measurementUpdatedAt ?? [:]).merging(["battery_level": Date()]) { _, new in new }
         }
     }
 
@@ -74,27 +75,27 @@ final class ResearchContextCollector {
 
             // 合計系（今日0時〜現在）
             self.fetchStat(type: self.stepType, unit: .count(), options: .cumulativeSum, start: todayStart) { v in
-                self.contextStore.update { $0.stepCount = v }
+                self.contextStore.update { c in c.stepCount = v; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["step_count": Date()]) { _, new in new } }
             }
             self.fetchStat(type: self.distanceType, unit: .meter(), options: .cumulativeSum, start: todayStart) { v in
-                self.contextStore.update { $0.walkingDistanceM = v }
+                self.contextStore.update { c in c.walkingDistanceM = v; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["walking_distance_m": Date()]) { _, new in new } }
             }
             self.fetchStat(type: self.flightsType, unit: .count(), options: .cumulativeSum, start: todayStart) { v in
-                self.contextStore.update { $0.flightsClimbed = v }
+                self.contextStore.update { c in c.flightsClimbed = v; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["flights_climbed": Date()]) { _, new in new } }
             }
             self.fetchStat(type: self.energyType, unit: .kilocalorie(), options: .cumulativeSum, start: todayStart) { v in
-                self.contextStore.update { $0.activeEnergyKcal = v }
+                self.contextStore.update { c in c.activeEnergyKcal = v; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["active_energy_kcal": Date()]) { _, new in new } }
             }
 
             // 平均系（直近1時間）
             self.fetchStat(type: self.speedType, unit: HKUnit.meter().unitDivided(by: .second()), options: .discreteAverage, start: lastHourStart) { v in
-                self.contextStore.update { $0.walkingSpeedMps = v }
+                self.contextStore.update { c in c.walkingSpeedMps = v; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["walking_speed_mps": Date()]) { _, new in new } }
             }
             self.fetchStat(type: self.stepLengthType, unit: .meter(), options: .discreteAverage, start: lastHourStart) { v in
-                self.contextStore.update { $0.walkingStepLengthM = v }
+                self.contextStore.update { c in c.walkingStepLengthM = v; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["walking_step_length_m": Date()]) { _, new in new } }
             }
             self.fetchStat(type: self.asymmetryType, unit: .percent(), options: .discreteAverage, start: lastHourStart) { v in
-                self.contextStore.update { $0.walkingAsymmetryPct = v.map { $0 * 100 } } // 追加: 0〜1 → %
+                self.contextStore.update { c in c.walkingAsymmetryPct = v.map { $0 * 100; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["walking_asymmetry_pct": Date()]) { _, new in new } } } // 追加: 0〜1 → %
             }
         }
     }
@@ -155,6 +156,6 @@ final class ResearchContextCollector {
             ResearchCalendarEvent(title: $0.title ?? "", start: $0.startDate, end: $0.endDate)
         }
         NSLog("[MFK-Research] Calendar events today=\(events.count)") // 追加: デバッグ
-        contextStore.update { $0.calendarEvents = events }
+        contextStore.update { c in c.calendarEvents = events; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["calendar_events": Date()]) { _, new in new } }
     }
 }

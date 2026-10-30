@@ -33,6 +33,10 @@ public enum QuestionKind: String, Codable, CaseIterable {
     case interventionFeedback
     /// 追加: 現在の主活動（大分類→詳細活動の2段階。v0.1 サーバーの最新質問で出す）
     case activityCheck
+    case currentState
+    case weatherMood
+    case typingReason
+    case supportOutcome
 }
 
 // MARK: - 質問テンプレート
@@ -105,6 +109,8 @@ public struct PendingQuestion: Codable {
     public var questionShownAt: Date?
     /// 「あとで」を押された回数。
     public var snoozeCount: Int
+    public var expiresAt: Date? = nil
+    public var relatedID: String? = nil
     /// 出題時点の文脈スナップショット。
     public let context: ContextSnapshot
 
@@ -529,13 +535,13 @@ public struct NarrativeEvent: Codable {
     public static func make(from pending: PendingQuestion,
                            answer: QuestionAnswer,
                            typing: TypingFeatures?,
-                           answeredAt: Date) -> NarrativeEvent {
+                           answeredAt: Date, source: String = "keyboard") -> NarrativeEvent {
         // 要約: 選択肢 value と自由記述を空白区切りで連結（どちらも無ければ nil）
         let parts = [answer.label, answer.freeText].compactMap { $0 }.filter { !$0.isEmpty }
         let summary = parts.isEmpty ? nil : parts.joined(separator: " / ")
         return NarrativeEvent(eventID: pending.id,
                               participantID: pending.participantID,
-                              source: "keyboard",
+                              source: source,
                               eventType: pending.eventType,
                               detectedAt: pending.detectedAt,
                               questionShownAt: pending.questionShownAt,

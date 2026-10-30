@@ -24,14 +24,20 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         let keyboard = UINavigationController(rootViewController: RootViewController())
         keyboard.tabBarItem = UITabBarItem(title: "キーボード", image: UIImage(systemName: "keyboard"), tag: 1)
         let tabs = UITabBarController()
-        tabs.viewControllers = [dashboard, keyboard]
+        let research = UINavigationController(rootViewController: ResearchViewController())
+        research.tabBarItem = UITabBarItem(title: "生活の気づき", image: UIImage(systemName: "cloud.sun"), tag: 2)
+        tabs.viewControllers = [dashboard, keyboard, research]
+        NotificationCenter.default.addObserver(forName: ResearchNotificationCoordinator.openQuestion, object: nil, queue: .main) { _ in tabs.selectedIndex = 2 }
         window.rootViewController = tabs
         self.window = window
         window.makeKeyAndVisible()
+        if UserDefaults(suiteName: AppConfig.appGroupID)?.data(forKey: "research.notificationQuestion") != nil { tabs.selectedIndex = 2 }
     }
 
     /// 追加: 前面になったら（設定が ON のときだけ）疑似センサー受信を開始する。
     func sceneDidBecomeActive(_ scene: UIScene) {
+        ResearchNotificationCoordinator.shared.foreground()
+        LocationContextCollector.shared.restore()
         ResearchContextCollector.shared.refresh() // 追加: 前面になるたびに端末Context（歩数・予定・バッテリー）を更新
         guard narrativeState.sensorReceiveEnabled else {
             NSLog("[MFK-Sensor] receive disabled (settings OFF)") // 追加: OFF のときは待ち受けない
@@ -47,6 +53,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     /// 追加: バックグラウンド遷移時も念のため停止しておく。
     func sceneDidEnterBackground(_ scene: UIScene) {
+        ResearchNotificationCoordinator.shared.background()
         SensorHTTPServer.shared.stop()
     }
 }
