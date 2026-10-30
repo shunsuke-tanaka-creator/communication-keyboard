@@ -17,6 +17,7 @@ public enum KeyAction: Equatable, Sendable {
     /// 任意固定文字の入力（英字・数字・記号モードで使用）。
     case input(String)
     /// 濁点/半濁点/小書きトグル（直前文字を循環変換）。
+    case shift
     case toggleDakuten
     /// 削除（バックスペース）。長押しで連続削除。
     case backspace
@@ -132,36 +133,6 @@ public enum KeyLayout {
         ]
     }
 
-    /// 数字・英字・記号などの固定文字レイアウトを生成する共通関数。
-    /// characters は中央3列(col1..3)へ順に割り当てる。
-    /// 左列・右列・下段機能キーは iOS 標準配置（かなと同じ）に揃える。
-    private static func fixedLayout(modeLabel: String, characters: [String]) -> [KeyDefinition] {
-        var keys: [KeyDefinition] = [
-            // 左列: モード切替（循環）。iOS 標準に合わせ ☆123 / ABC / あいう を縦に並べる。
-            KeyDefinition(label: "123", action: .setInputMode(.number), row: 0, column: 0),
-            KeyDefinition(label: "ABC", action: .setInputMode(.alphabet), row: 1, column: 0),
-            KeyDefinition(label: "あいう", action: .setInputMode(.hiragana), row: 2, column: 0),
-            KeyDefinition(label: "🌐", action: .nextKeyboard, row: 3, column: 0),
-            // 右列: 削除 / 空白 / 改行(確定) / 次候補。
-            KeyDefinition(label: "⌫", action: .backspace, row: 0, column: 4),
-            KeyDefinition(label: "空白", action: .space, row: 1, column: 4),
-            KeyDefinition(label: "改行", action: .returnOrConfirm, row: 2, column: 4),
-            KeyDefinition(label: "次候補", action: .nextCandidate, row: 3, column: 4),
-        ]
-        // 中央3列 × row0..3 に文字を並べる（最大12文字。row3 は col1,col2,col3）。
-        let slots: [(Int, Int)] = [
-            (0, 1), (0, 2), (0, 3),
-            (1, 1), (1, 2), (1, 3),
-            (2, 1), (2, 2), (2, 3),
-            (3, 1), (3, 2), (3, 3),
-        ]
-        for (i, ch) in characters.prefix(slots.count).enumerated() {
-            let (row, col) = slots[i]
-            keys.append(KeyDefinition(label: ch, action: .input(ch), row: row, column: col))
-        }
-        return keys
-    }
-
     /// カタカナはひらがなキー配列のラベルだけカタカナに置換（入力自体は KanaTransform で変換）。
     /// 実際の文字変換は InputState 側でモードを見て行うため、ここではひらがな配列を流用する。
     public static func katakanaLayout() -> [KeyDefinition] {
@@ -172,18 +143,37 @@ public enum KeyLayout {
     }
 
     public static func alphabetLayout() -> [KeyDefinition] {
-        fixedLayout(modeLabel: InputMode.alphabet.label,
-                    characters: ["@", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J"])
+        qwertyRows([Array("qwertyuiop").map(String.init),
+                    Array("asdfghjkl").map(String.init),
+                    Array("zxcvbnm").map(String.init)], alphabet: true)
     }
 
     public static func numberLayout() -> [KeyDefinition] {
-        fixedLayout(modeLabel: InputMode.number.label,
-                    characters: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-"])
+        qwertyRows([Array("1234567890").map(String.init),
+                    ["-", "/", ":", ";", "(", ")", "$", "&", "@", "\""],
+                    [".", ",", "?", "!", "'"]], alphabet: false)
     }
 
     public static func symbolLayout() -> [KeyDefinition] {
-        fixedLayout(modeLabel: InputMode.symbol.label,
-                    characters: ["、", "。", "！", "？", "「", "」", "（", "）", "・", "…", "〜"])
+        qwertyRows([["[", "]", "{", "}", "#", "%", "^", "*", "+", "="],
+                    ["_", "\\", "|", "~", "<", ">", "€", "£", "¥", "•"],
+                    [".", ",", "?", "!", "'"]], alphabet: false, symbols: true)
+    }
+
+    private static func qwertyRows(_ rows: [[String]], alphabet: Bool, symbols: Bool = false) -> [KeyDefinition] {
+        var result: [KeyDefinition] = []
+        for (row, characters) in rows.enumerated() {
+            var keys = characters.map { ($0, KeyAction.input($0)) }
+            if row == 2 {
+                keys.insert(alphabet ? ("⇧", .shift) : (symbols ? "123" : "#+=", .setInputMode(symbols ? .number : .symbol)), at: 0)
+                keys.append(("⌫", .backspace))
+            }
+            result += keys.enumerated().map { KeyDefinition(label: $0.element.0, action: $0.element.1, row: row, column: $0.offset) }
+        }
+        let bottom: [(String, KeyAction)] = [(alphabet ? "123" : "ABC", .setInputMode(alphabet ? .number : .alphabet)),
+            ("あいう", .setInputMode(.hiragana)), ("🌐", .nextKeyboard), ("space", .space), ("return", .returnOrConfirm)]
+        result += bottom.enumerated().map { KeyDefinition(label: $0.element.0, action: $0.element.1, row: 3, column: $0.offset) }
+        return result
     }
 
     /// モードに応じたレイアウトを返す。
@@ -197,10 +187,8 @@ public enum KeyLayout {
         case .symbol: keys = symbolLayout()
         }
         return keys.map { key in
+            guard mode == .hiragana || mode == .katakana else { return key }
             guard key.column == 0 else { return key }
-            if key.row == 0 && mode == .number {
-                return KeyDefinition(label: "#+=", action: .setInputMode(.symbol), row: 0, column: 0)
-            }
             if key.row == 2 && mode == .hiragana {
                 return KeyDefinition(label: "カナ", action: .setInputMode(.katakana), row: 2, column: 0)
             }

@@ -26,14 +26,16 @@ final class SettingsViewController: UIViewController {
     }
 
     private let items: [Item] = [
+        Item(key: "englishAutocorrectionEnabled", title: "英語の自動修正", subtitle: "空白で区切った英単語のスペルを修正する", defaultValue: false),
+        Item(key: "englishAutoCapitalizationEnabled", title: "英語の自動大文字", subtitle: "入力欄の指定に従い文頭などを大文字にする", defaultValue: true),
         Item(key: SettingsKeys.toggleInputEnabled,
              title: "トグル入力",
              subtitle: "同じキーの連打でかなを循環入力する",
              defaultValue: true),
         Item(key: SettingsKeys.flickOnlyEnabled,
              title: "フリックのみ",
-             subtitle: "トグルを無効化しフリック入力だけにする",
-             defaultValue: false),
+             subtitle: "中央タップは同じ文字を続けて入力。OFFで連打入力を使用",
+             defaultValue: true),
         Item(key: SettingsKeys.learningEnabled,
              title: "学習",
              subtitle: "変換結果を学習して候補を最適化する",

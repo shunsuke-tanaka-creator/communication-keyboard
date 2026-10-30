@@ -59,7 +59,7 @@ public final class InputState {
     /// トグル入力（同一キー連打でかな循環）ON/OFF。
     public var toggleInputEnabled = true
     /// フリックのみ入力 ON/OFF（中央タップは入力し、連打トグルだけ無効化）。
-    public var flickOnlyEnabled = false
+    public var flickOnlyEnabled = true
 
     /// エンジンが返す最新の変換状態。UI はこれを描画する。
     public private(set) var currentResult: ConversionResult = .empty
@@ -129,6 +129,10 @@ public final class InputState {
     @discardableResult
     public func deleteBackward() -> ConversionResult {
         lastKanaKeyID = nil
+        if currentResult.isConverting {
+            currentResult = engine.cancelConversion()
+            return currentResult
+        }
         engine.deleteBackward()
         currentResult = engine.requestPrediction()
         return currentResult
