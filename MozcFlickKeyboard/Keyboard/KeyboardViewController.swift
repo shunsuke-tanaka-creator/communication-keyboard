@@ -312,7 +312,7 @@ final class KeyboardViewController: UIInputViewController {
 
     override func textDidChange(_ textInput: UITextInput?) {
         super.textDidChange(textInput)
-        if let document = compositionDocumentID, document != textDocumentProxy.documentIdentifier { abandonComposition() }
+        if let document = compositionDocumentID, document != currentDocumentID { abandonComposition() }
         refreshInputTraits()
     }
 
@@ -341,7 +341,7 @@ final class KeyboardViewController: UIInputViewController {
 
     private var traitsDocumentID: UUID?
     private func refreshInputTraits() {
-        let document = textDocumentProxy.documentIdentifier
+        let document = currentDocumentID
         if traitsDocumentID != document && !researchInputMode {
             traitsDocumentID = document
             let mode: InputMode?
@@ -462,13 +462,17 @@ final class KeyboardViewController: UIInputViewController {
     /// by guessing its length. UIKit ranges use UTF-16, not Swift Character counts.
     private var isUpdatingMarkedText = false
     private var compositionDocumentID: UUID?
+    // 追加: documentIdentifier は Swift では非Optional だが、ホストが nil を返すと UUID へのブリッジで落ちるため KVC で Optional として読む
+    private var currentDocumentID: UUID? {
+        (textDocumentProxy as? NSObject)?.value(forKey: "documentIdentifier") as? UUID // 追加
+    }
 
     private func syncInline(_ result: ConversionResult) {
         let text = result.isConverting && !result.segments.isEmpty
             ? result.segments.map { $0.selected.value }.joined() : result.composition
         isUpdatingMarkedText = true
         defer { isUpdatingMarkedText = false }
-        compositionDocumentID = textDocumentProxy.documentIdentifier
+        compositionDocumentID = currentDocumentID
         pendingComposition = text
         textDocumentProxy.setMarkedText(text, selectedRange: NSRange(location: text.utf16.count, length: 0))
         if text.isEmpty { textDocumentProxy.unmarkText(); compositionDocumentID = nil }
@@ -476,7 +480,7 @@ final class KeyboardViewController: UIInputViewController {
     }
 
     private func commitAndInsert() {
-        guard compositionDocumentID == nil || compositionDocumentID == textDocumentProxy.documentIdentifier else {
+        guard compositionDocumentID == nil || compositionDocumentID == currentDocumentID else {
             abandonComposition(); return
         }
         let text = inputState.commit()
@@ -498,7 +502,7 @@ final class KeyboardViewController: UIInputViewController {
         guard !isUpdatingMarkedText else { return }
         isUpdatingMarkedText = true
         defer { isUpdatingMarkedText = false }
-        if compositionDocumentID == textDocumentProxy.documentIdentifier { textDocumentProxy.unmarkText() }
+        if compositionDocumentID == currentDocumentID { textDocumentProxy.unmarkText() }
         inputState.reset()
         pendingComposition = ""
         compositionDocumentID = nil

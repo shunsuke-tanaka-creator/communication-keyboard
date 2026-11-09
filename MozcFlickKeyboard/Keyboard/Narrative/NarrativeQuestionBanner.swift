@@ -197,7 +197,7 @@ final class NarrativeQuestionBanner: UIView {
             optionsScroll.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 12),
             optionsScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             optionsScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            optionsScroll.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            { let c = optionsScroll.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12); c.priority = .defaultHigh; return c }(), // 変更: バナー高さ0時の制約衝突警告を避けるため優先度を下げる
 
             // 変更: 内部 Stack を contentLayoutGuide にピン留めし、幅を frameLayoutGuide に合わせて縦スクロールにする。
             optionsStack.leadingAnchor.constraint(equalTo: optionsScroll.contentLayoutGuide.leadingAnchor),

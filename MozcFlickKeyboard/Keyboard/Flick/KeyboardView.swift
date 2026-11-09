@@ -483,6 +483,7 @@ final class KeyboardView: UIView {
             let rowKeys = layout.filter { $0.row == row }
             if inputMode == .alphabet || inputMode == .number || inputMode == .symbol {
                 rowStack.spacing = 5
+                rootStack.addArrangedSubview(rowStack) // 変更: spacer の rootStack 幅制約より先に階層へ入れる（共通祖先なしクラッシュ対策）
                 var previous: FlickKeyButton?
                 var previousWeight: CGFloat = 1
                 if row == 1 && inputMode == .alphabet {
@@ -510,8 +511,7 @@ final class KeyboardView: UIView {
                     rowStack.addArrangedSubview(spacer)
                     spacer.widthAnchor.constraint(equalTo: rootStack.widthAnchor, multiplier: 0.045).isActive = true
                 }
-                rootStack.addArrangedSubview(rowStack)
-                continue
+                continue // 変更: addArrangedSubview は上へ移動
             }
             var cells: [UIView] = []
             for column in 0..<KeyLayout.columnCount {
