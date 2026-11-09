@@ -95,7 +95,7 @@ final class ResearchContextCollector {
                 self.contextStore.update { c in c.walkingStepLengthM = v; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["walking_step_length_m": Date()]) { _, new in new } }
             }
             self.fetchStat(type: self.asymmetryType, unit: .percent(), options: .discreteAverage, start: lastHourStart) { v in
-                self.contextStore.update { c in c.walkingAsymmetryPct = v.map { $0 * 100; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["walking_asymmetry_pct": Date()]) { _, new in new } } } // 追加: 0〜1 → %
+                self.contextStore.update { c in c.walkingAsymmetryPct = v.map { $0 * 100 }; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["walking_asymmetry_pct": Date()]) { _, new in new } } // 追加: 0〜1 → %
             }
         }
     }
