@@ -5,7 +5,7 @@ import MozcFlickShared
 /// Native opt-ins and answers; detailed timelines/topologies are served by the research dashboard.
 final class ResearchViewController: UITableViewController {
     private let state = NarrativeState()
-    private var status = "名前を付けずに、場所と生活パターンを自動で学習します。"
+    private var status = "行動の流れから拠点とタスクを別々に学習します。候補は確認・命名・訂正できます。"
     private var candidate: ProposalCandidate?
     init() { super.init(style: .insetGrouped) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -19,11 +19,11 @@ final class ResearchViewController: UITableViewController {
         openNotification()
     }
     override func numberOfSections(in tableView: UITableView) -> Int { 3 }
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { [4,7,2][section] }
+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { [4,5,2][section] }
     override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? { ["お天気分を記録", "収集と質問の設定", "状態・傾向・自動マップ"][section] }
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
         if section == 0 { return "天気は気分の4分類です。疲労の点数とは別に記録します。" }
-        if section == 1 { return "位置の座標は端末内に保存し、場所IDだけを送ります。通知と背景の実行時刻はiOSにより制限されます。\n" + LocationContextCollector.shared.authorizationDescription }
+        if section == 1 { return "GPSは使用しません。拠点・タスクの確認も1日の質問上限に含みます。通知と背景の実行時刻はiOSにより制限されます。" }
         return status
     }
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -31,16 +31,16 @@ final class ResearchViewController: UITableViewController {
         let p = WorkflowPreferences.current
         if indexPath.section == 0 { cell.textLabel?.text = WeatherMood.allCases[indexPath.row].label }
         if indexPath.section == 1 {
-            let labels = ["自動質問", "場所の自動分類", "質問通知", "休憩などの提案", "背景の位置検出を許可", "1日の質問上限", "質問の間隔（分）"]
+            let labels = ["自動質問", "質問通知", "休憩などの提案", "1日の質問上限", "質問の間隔（分）"]
             cell.textLabel?.text = labels[indexPath.row]
-            if indexPath.row < 4 {
+            if indexPath.row < 3 {
                 let control = UISwitch(); control.tag = indexPath.row
-                control.isOn = [state.narrativeEnabled,p.locationEnabled,p.notificationsEnabled,p.interventionsEnabled][indexPath.row]
+                control.isOn = [state.narrativeEnabled,p.notificationsEnabled,p.interventionsEnabled][indexPath.row]
                 control.addTarget(self, action: #selector(toggle(_:)), for: .valueChanged); cell.accessoryView = control
             } else {
                 cell.accessoryType = .disclosureIndicator
-                if indexPath.row == 5 { cell.detailTextLabel?.text = "\(p.dailyLimit)回（提案\(p.interventionLimit)回まで）" }
-                if indexPath.row == 6 { cell.detailTextLabel?.text = "\(p.gapMinutes)分" }
+                if indexPath.row == 3 { cell.detailTextLabel?.text = "\(p.dailyLimit)回（提案\(p.interventionLimit)回まで）" }
+                if indexPath.row == 4 { cell.detailTextLabel?.text = "\(p.gapMinutes)分" }
             }
         }
         if indexPath.section == 2 { cell.textLabel?.text = indexPath.row == 0 ? "今の質問に回答" : "履歴・傾向・トポロジーを見る"; cell.accessoryType = .disclosureIndicator }
@@ -50,8 +50,7 @@ final class ResearchViewController: UITableViewController {
         var p = WorkflowPreferences.current
         switch control.tag {
         case 0: state.narrativeEnabled = control.isOn
-        case 1: LocationContextCollector.shared.enable(control.isOn)
-        case 2: ResearchNotificationCoordinator.shared.setEnabled(control.isOn)
+        case 1: ResearchNotificationCoordinator.shared.setEnabled(control.isOn)
         default: p.interventionsEnabled = control.isOn; WorkflowPreferences.current = p
         }
         ResearchNotificationCoordinator.shared.cancelDisallowed()
@@ -65,9 +64,8 @@ final class ResearchViewController: UITableViewController {
             status = saved ? "\(mood.label)を保存しました。通信できるときに同期します。" : "保存できませんでした。もう一度お試しください。"
             tableView.reloadData()
         } else if indexPath.section == 1 {
-            if indexPath.row == 4 { LocationContextCollector.shared.requestBackgroundPermission() }
-            if indexPath.row == 5 { choose(title: "1日の質問上限", values: [2,3,4,6,8]) { n in var p = WorkflowPreferences.current; p.dailyLimit = n; p.interventionLimit = min(2,n); WorkflowPreferences.current = p } }
-            if indexPath.row == 6 { choose(title: "質問の間隔（分）", values: [30,60,90,120]) { n in var p = WorkflowPreferences.current; p.gapMinutes = n; WorkflowPreferences.current = p } }
+            if indexPath.row == 3 { choose(title: "1日の質問上限", values: [2,3,4,6,8]) { n in var p = WorkflowPreferences.current; p.dailyLimit = n; p.interventionLimit = min(2,n); WorkflowPreferences.current = p } }
+            if indexPath.row == 4 { choose(title: "質問の間隔（分）", values: [30,60,90,120]) { n in var p = WorkflowPreferences.current; p.gapMinutes = n; WorkflowPreferences.current = p } }
         } else if indexPath.row == 0 { fetchQuestion() }
         else { navigationController?.pushViewController(ResearchWebViewController(), animated: true) }
     }

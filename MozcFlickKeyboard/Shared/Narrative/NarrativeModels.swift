@@ -37,6 +37,8 @@ public enum QuestionKind: String, Codable, CaseIterable {
     case weatherMood
     case typingReason
     case supportOutcome
+    case placeCheck
+    case taskCheck
 }
 
 // MARK: - 質問テンプレート

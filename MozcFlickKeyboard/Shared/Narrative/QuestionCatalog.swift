@@ -25,6 +25,10 @@ public enum QuestionCatalog {
             return QuestionTemplate(kind: kind, prompt: "入力の修正が増えています。主な理由は？",
                 options: [("誤入力","mistype"),("文章を考え直した","rewrite"),("変換が合わない","conversion"),("わからない","unknown")].map { QuestionOption(label: $0.0, value: $0.1) },
                 allowFreeText: false, cooldown: 3600, maxPerDay: 2)
+        case .placeCheck, .taskCheck:
+            // Identities/options come from the server; no local GPS or task-to-place shortcut.
+            return QuestionTemplate(kind: kind, prompt: kind == .placeCheck ? "今いる拠点は？" : "今のタスクは？",
+                options: [], allowFreeText: false, cooldown: 3600, maxPerDay: 2)
         case .supportOutcome:
             return QuestionTemplate(kind: kind, prompt: "先ほどの提案はどうでしたか？", options: [], allowFreeText: false, cooldown: 3600, maxPerDay: 2)
         case .morningGoal:

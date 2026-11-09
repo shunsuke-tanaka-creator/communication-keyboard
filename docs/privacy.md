@@ -1,5 +1,8 @@
 # プライバシー方針
 
+> 更新：GPSによる場所分類・座標保存は廃止しました。現在の仕様は [behavior-context.md](behavior-context.md) を参照してください。以下のGPS訪問・場所マップの記載は旧方式です。
+
+
 この研究版（MacBook統合版）は、キーボードが記録した入力イベント（確定本文・前後文脈を含む）、お天気分の回答・文脈、端末Context（HealthKit・カレンダー・バッテリー）を Tailscale 経由で MacBook の研究サーバーへ同期します。Mac側では SwitchBot の開閉記録と合わせて SQLite に保存します。
 
 - 接続先の既定値は `http://100.106.185.3:8000`（`NarrativeState.recommendedBackendURL`）。設定画面の Backend URL を**空欄にして保存すると**送信・取得を停止します。保存済みのデータや送信待ちキューは端末に残ります。

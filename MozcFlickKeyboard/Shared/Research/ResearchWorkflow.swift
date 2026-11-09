@@ -42,7 +42,7 @@ public struct ResearchWorkflowEvent: Codable {
 }
 
 public struct WorkflowPreferences: Codable {
-    public var locationEnabled = false
+    public var locationEnabled = false // Legacy preference retained solely for upgrade cleanup.
     public var notificationsEnabled = false
     public var interventionsEnabled = true
     public var dailyLimit = 4
@@ -66,6 +66,7 @@ public struct WorkflowPreferences: Codable {
 public enum ResearchWorkflow {
     @discardableResult
     public static func emit(kind: String, payload: [String: ResearchValue], at: Date = Date(), id: String = UUID().uuidString) -> Bool {
+        guard kind != "place_visit" else { return false }
         let e = ResearchWorkflowEvent(kind: kind, payload: payload, at: at, id: id)
         let state = NarrativeState()
         let box = ResearchEventOutbox()
@@ -82,9 +83,23 @@ public enum ResearchWorkflow {
             "interventions_enabled": .bool(p.interventionsEnabled), "daily_limit": .number(Double(p.dailyLimit)),
             "intervention_limit": .number(Double(p.interventionLimit)), "gap_minutes": .number(Double(p.gapMinutes))])
     }
+    /// The answer labels the observation at question issuance, not a potentially delayed reply.
+    public static func contextAnswer(_ q: PendingQuestion, value: String) -> [String: ResearchValue]? {
+        guard q.kind == .placeCheck || q.kind == .taskCheck,
+              q.options.contains(where: { $0.value == value }) else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return ["axis": .string(q.kind == .placeCheck ? "place" : "task"),
+                "class_id": .string(value), "question_id": .string(q.id),
+                "start": .string(formatter.string(from: q.detectedAt.addingTimeInterval(-300))),
+                "end": .string(formatter.string(from: q.detectedAt))]
+    }
     /// Specialized annotations are separate from model labels and generic narrative answers.
     public static func annotate(_ q: PendingQuestion, value: String) {
-        if q.kind == .weatherMood || q.kind == .morningMood {
+        if q.kind == .placeCheck || q.kind == .taskCheck {
+            guard let body = contextAnswer(q, value: value) else { return }
+            emit(kind: "context_label", payload: body, id: "context-answer-" + q.id)
+        } else if q.kind == .weatherMood || q.kind == .morningMood {
             var body: [String: ResearchValue] = ["weather": .string(value)]
             if q.context.externalTrigger == "server-v2" { body["question_id"] = .string(q.id) }
             emit(kind: "weather_mood", payload: body)
@@ -144,36 +159,5 @@ public enum StateAssessment {
         let endpoints = index == 0 ? ("とても悪い", "とても良い") : index == 3 ? ("とても低い", "とても高い") : ("まったくない", "とても強い")
         return (1...5).map { n in QuestionOption(label: "\(n)\(n == 1 ? "：" + endpoints.0 : n == 5 ? "：" + endpoints.1 : "")", value: "scale:\(keys[index]):\(n)") }
             + [QuestionOption(label: "この項目をスキップ", value: "scale:\(keys[index]):skip")]
-    }
-}
-
-/// Portable visit clustering. Raw coordinates are persisted only on the phone.
-public struct PlacePrototype: Codable {
-    public let id: String
-    public var latitude: Double
-    public var longitude: Double
-    public var count: Int
-}
-public struct AutomaticPlaceMap: Codable {
-    public private(set) var nodes: [PlacePrototype] = []
-    public init() {}
-    public mutating func classify(latitude: Double, longitude: Double, accuracy: Double) -> String? {
-        guard latitude.isFinite, longitude.isFinite, (-90...90).contains(latitude), (-180...180).contains(longitude),
-              accuracy.isFinite, accuracy >= 0, accuracy <= 150 else { return nil }
-        func distance(_ n: PlacePrototype) -> Double {
-            let r = Double.pi / 180
-            let a = pow(sin((latitude-n.latitude)*r/2),2) + cos(latitude*r)*cos(n.latitude*r)*pow(sin((longitude-n.longitude)*r/2),2)
-            return 6371000 * 2 * asin(sqrt(min(1, max(0,a))))
-        }
-        if let index = nodes.indices.min(by: { distance(nodes[$0]) < distance(nodes[$1]) }), distance(nodes[index]) <= max(100, accuracy * 1.5) {
-            nodes[index].count += 1
-            let n = Double(nodes[index].count)
-            nodes[index].latitude += (latitude-nodes[index].latitude)/n
-            nodes[index].longitude += (longitude-nodes[index].longitude)/n
-            return nodes[index].id
-        }
-        let id = "place_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        nodes.append(PlacePrototype(id: id, latitude: latitude, longitude: longitude, count: 1))
-        return id
     }
 }
