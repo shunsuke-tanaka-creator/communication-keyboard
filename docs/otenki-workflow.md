@@ -1,5 +1,8 @@
 # お天気分・場所と生活パターン研究版
 
+> 更新：GPSによる場所分類・座標保存は廃止しました。現在の仕様は [behavior-context.md](behavior-context.md) を参照してください。以下のGPS訪問・場所マップの記載は旧方式です。
+
+
 対になる `switch_bot_python` の研究版と同時に利用する。主推定器はサーバーのMicro/Meso/Macro三階層LSTMを維持する。標準participantは `p001`。外部APIキーは不要。
 
 ## 追加した操作

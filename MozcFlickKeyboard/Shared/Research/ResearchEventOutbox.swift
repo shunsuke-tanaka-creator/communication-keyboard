@@ -45,6 +45,13 @@ public final class ResearchEventOutbox {
             else { completion(false) }
             return
         }
+        // Quarantine previously queued GPS visits locally; never upload them after upgrading.
+        if let old = try? JSONSerialization.jsonObject(with: entry.body) as? [String: Any],
+           old["kind"] as? String == "place_visit" {
+            try? FileManager.default.moveItem(at: file, to: file.appendingPathExtension("gps-disabled"))
+            send(files, index: index + 1, root: root, completion: completion)
+            return
+        }
         var request = URLRequest(url: root.appendingPathComponent(entry.route), timeoutInterval: 15)
         request.httpMethod = "POST"
         request.httpBody = entry.body
