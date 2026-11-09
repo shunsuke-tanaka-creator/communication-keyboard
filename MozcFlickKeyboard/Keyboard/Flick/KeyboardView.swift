@@ -392,8 +392,8 @@ final class KeyboardView: UIView {
     /// 追加:「記録」ボタン押下。手動イベントバナーを開く指示を controller へ送る。
     /// 追加:「情報」ボタン押下。Info ページを開く指示を controller へ送る。
     /// 変更: 質問をバナーに表示する。フル画面モードでキーボード全体を占有する（キー・候補バーを隠す）。
-    func showQuestion(_ pending: PendingQuestion) {
-        questionBanner.showQuestion(pending) // 追加: 内容を構築
+    func showQuestion(_ pending: PendingQuestion, isPreview: Bool = false) {
+        questionBanner.showQuestion(pending, isPreview: isPreview) // 追加: 内容とプレビュー表示を構築
         setNarrativeFullScreen(true) // 追加: キー領域・候補バーを隠してバナーが全面を使う
     }
 

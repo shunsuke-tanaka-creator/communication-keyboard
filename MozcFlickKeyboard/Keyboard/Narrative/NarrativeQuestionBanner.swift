@@ -57,9 +57,23 @@ final class NarrativeQuestionBanner: UIView {
         return l
     }()
 
+    /// 追加: read-only 候補を実質問と取り違えないための表示。
+    private let previewBadge: UILabel = {
+        let l = UILabel()
+        l.text = "プレビュー"
+        l.font = .systemFont(ofSize: 12, weight: .bold)
+        l.textColor = .white
+        l.backgroundColor = KeyboardAppearance.accent
+        l.textAlignment = .center
+        l.layer.cornerRadius = 8
+        l.layer.masksToBounds = true
+        l.isHidden = true
+        return l
+    }()
+
     /// 追加: 見出しアイコン + 質問文を横に並べるスタック。
     private lazy var headerStack: UIStackView = {
-        let s = UIStackView(arrangedSubviews: [headerIcon, promptLabel])
+        let s = UIStackView(arrangedSubviews: [headerIcon, previewBadge, promptLabel])
         s.axis = .horizontal
         s.spacing = 10
         s.alignment = .center
@@ -154,6 +168,8 @@ final class NarrativeQuestionBanner: UIView {
         NSLayoutConstraint.activate([
             headerIcon.widthAnchor.constraint(equalToConstant: 28),
             headerIcon.heightAnchor.constraint(equalToConstant: 28),
+            previewBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 72),
+            previewBadge.heightAnchor.constraint(equalToConstant: 24),
         ])
 
         // 追加: 選択肢 ScrollView と内部 Stack を配置。
@@ -200,12 +216,15 @@ final class NarrativeQuestionBanner: UIView {
     // MARK: - 公開 API
 
     /// 追加: 質問を表示する（選択肢ボタン群を作り直す）。
-    func showQuestion(_ pending: PendingQuestion) {
+    func showQuestion(_ pending: PendingQuestion, isPreview: Bool = false) {
         currentPending = pending // 追加: 自由入力の「決定」で参照するため保持
         setFreeTextMode(false) // 追加: 質問表示時は必ず選択肢モードから始める
+        previewBadge.isHidden = !isPreview // 追加: プレビュー候補を明示
         promptLabel.text = pending.prompt // 追加: 質問文を表示
         headerIcon.image = UIImage(systemName: headerIconName(for: pending.kind)) // 追加: 質問種別に応じた天気マーク
-        rebuildOptionButtons(options: pending.options, allowFreeText: pending.allowFreeText, showSnooze: true, manual: false) // 追加: 選択肢を再構築
+        // 追加: プレビューの自由入力はセッション記録へ影響し得るため、選択肢のローカル確認だけに限定する。
+        rebuildOptionButtons(options: pending.options, allowFreeText: pending.allowFreeText && !isPreview,
+                             showSnooze: true, manual: false)
     }
 
     /// 追加: 同じ質問のまま、質問文と選択肢だけを差し替える（活動2段階・夜5尺度の画面切り替え用）。
@@ -255,6 +274,7 @@ final class NarrativeQuestionBanner: UIView {
         promptLabel.text = "" // 追加: 文言消去
         promptLabel.numberOfLines = 2 // 追加: Info で 0 にした行数を質問用（2行）へ戻す
         headerIcon.image = nil // 追加: 見出しの天気マークも消す
+        previewBadge.isHidden = true // 追加: プレビュー表示を戻す
         draftLabel.text = "" // 追加: 下書き消去
         setFreeTextMode(false) // 追加: 選択肢モードへ戻す
         clearOptionButtons() // 追加: 動的ボタンを撤去

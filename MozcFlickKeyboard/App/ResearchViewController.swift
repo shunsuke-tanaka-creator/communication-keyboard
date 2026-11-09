@@ -6,7 +6,7 @@ import MozcFlickShared
 final class ResearchViewController: UITableViewController {
     private let state = NarrativeState()
     private var status = "名前を付けずに、場所と生活パターンを自動で学習します。"
-    private var question: PendingQuestion?
+    private var candidate: ProposalCandidate?
     init() { super.init(style: .insetGrouped) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func viewDidLoad() {
@@ -78,9 +78,10 @@ final class ResearchViewController: UITableViewController {
     }
     private func fetchQuestion() {
         ResearchEventOutbox().flush(baseURL: state.backendBaseURL) { _ in
-            ResearchAPIClient(baseURL: self.state.backendBaseURL).fetchPendingQuestion(participantID: self.state.participantID) { q in
-                guard let q = q else { self.status = "今の質問はありません。天気は上の4種類からいつでも記録できます。"; self.tableView.reloadData(); return }
-                self.show(q)
+            ResearchAPIClient(baseURL: self.state.backendBaseURL).fetchProposal(
+                participantID: self.state.participantID, source: self.state.proposalDataSource) { candidate in
+                guard let candidate = candidate else { self.status = "今の質問はありません。天気は上の4種類からいつでも記録できます。"; self.tableView.reloadData(); return }
+                self.show(candidate)
             }
         }
     }
@@ -89,49 +90,88 @@ final class ResearchViewController: UITableViewController {
         guard presentedViewController == nil, let data = defaults?.data(forKey: "research.notificationQuestion"),
               let q = try? NarrativeJSON.decoder.decode(PendingQuestion.self, from: data) else { return }
         defaults?.removeObject(forKey: "research.notificationQuestion")
-        if q.expiresAt.map({ $0 > Date() }) ?? true { show(q) } else { fetchQuestion() }
+        if q.expiresAt.map({ $0 > Date() }) ?? true {
+            show(ProposalCandidate(question: q, isPreview: false))
+        } else { fetchQuestion() }
     }
-    private func show(_ value: PendingQuestion) {
+    private func show(_ candidate: ProposalCandidate) {
         guard presentedViewController == nil, state.narrativeEnabled else { return }
-        var q = value; q.questionShownAt = Date(); question = q
-        ResearchPresentation.record(q)
-        ResearchWorkflow.questionState(q, "shown")
+        var q = candidate.question; q.questionShownAt = Date()
+        self.candidate = ProposalCandidate(question: q, isPreview: candidate.isPreview)
+        if !candidate.isPreview {
+            ResearchPresentation.record(q)
+            ResearchWorkflow.questionState(q, "shown")
+        }
         if q.kind == .currentState || q.kind == .nightReflection {
             let form = ResearchAssessmentViewController(daily: q.kind == .nightReflection) { [weak self] values in
                 guard let self = self else { return }
                 if let values = values {
                     let data = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys])
                     self.save(value: q.kind == .currentState ? "current_state" : "daily_reflection", text: data.flatMap { String(data: $0, encoding: .utf8) })
-                } else { ResearchWorkflow.questionState(q, "deferred") }
+                } else if !candidate.isPreview { ResearchWorkflow.questionState(q, "deferred") }
+                self.candidate = nil
             }
             present(UINavigationController(rootViewController: form), animated: true)
             return
         }
-        let alert = UIAlertController(title: "お天気分", message: q.prompt, preferredStyle: .alert)
+        let alert = UIAlertController(title: candidate.isPreview ? "お天気分・プレビュー" : "お天気分",
+                                      message: q.prompt, preferredStyle: .alert)
         for option in q.options {
             alert.addAction(UIAlertAction(title: option.label, style: .default) { _ in
                 self.save(value: option.value)
             })
         }
-        alert.addAction(UIAlertAction(title: "あとで", style: .cancel) { _ in ResearchWorkflow.questionState(q, "deferred") })
+        alert.addAction(UIAlertAction(title: candidate.isPreview ? "閉じる" : "あとで", style: .cancel) { _ in
+            if !candidate.isPreview { ResearchWorkflow.questionState(q, "deferred") }
+            self.candidate = nil
+        })
         present(alert, animated: true)
     }
     private func save(value: String, text: String? = nil) {
-        guard let q = question else { return }
+        guard let candidate = candidate else { return }
+        let q = candidate.question
+        if candidate.isPreview {
+            NSLog("[MFK-Research] preview answered locally id=\(q.id) value=\(value)") // 追加: サーバー・セッション・端末回答状態へ影響させない
+            self.candidate = nil
+            status = "プレビューを閉じました。回答は保存・送信されません。"
+            tableView.reloadData()
+            return
+        }
         ResearchWorkflow.annotate(q, value: value)
         NarrativeRepositoryHub(baseURL: state.backendBaseURL).save(NarrativeEvent.make(from: q,
             answer: QuestionAnswer(label: value, freeText: text), typing: nil, answeredAt: Date(), source: "parent_app"))
-        question = nil; status = "回答を保存しました。"; tableView.reloadData()
+        self.candidate = nil; status = "回答を保存しました。"; tableView.reloadData()
     }
 }
 
 final class ResearchWebViewController: UIViewController, WKNavigationDelegate {
+    private var loadedIdentity: String?
     override func loadView() {
         let web = WKWebView(); web.navigationDelegate = self; view = web; title = "生活の気づき"
+        NotificationCenter.default.addObserver(self, selector: #selector(reloadForDataSource),
+                                               name: ProposalDataSource.didChangeNotification, object: nil)
+        loadInsightsIfNeeded(force: true)
+    }
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        loadInsightsIfNeeded(force: false)
+    }
+    @objc private func reloadForDataSource() {
+        guard viewIfLoaded?.window != nil else { return }
+        loadInsightsIfNeeded(force: true)
+    }
+    private func loadInsightsIfNeeded(force: Bool) {
         let state = NarrativeState()
-        if let root = URL(string: state.backendBaseURL) {
-            web.load(URLRequest(url: root.appendingPathComponent("research/\(state.participantID)/insights")))
-        }
+        let identity = "\(state.backendBaseURL)|\(state.participantID)|\(state.proposalDataSource.rawValue)"
+        guard force || identity != loadedIdentity,
+              let root = URL(string: state.backendBaseURL),
+              var components = URLComponents(url: root.appendingPathComponent("research/\(state.participantID)/insights"),
+                                             resolvingAgainstBaseURL: false),
+              let web = view as? WKWebView else { return }
+        components.queryItems = [URLQueryItem(name: "data_mode", value: state.proposalDataSource.serverDataMode)]
+        guard let url = components.url else { return }
+        loadedIdentity = identity
+        web.load(URLRequest(url: url))
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         let alert = UIAlertController(title: "接続できません", message: "サーバーの起動とTailscale接続を確認してください。", preferredStyle: .alert)

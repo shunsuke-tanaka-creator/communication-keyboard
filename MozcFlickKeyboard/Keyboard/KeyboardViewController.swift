@@ -108,7 +108,8 @@ final class KeyboardViewController: UIInputViewController {
     private let narrativePMTT = MockPMTTAdapter()
 
     /// 追加: いまバナーに表示中の質問（回答保存で参照）。
-    private var currentPending: PendingQuestion?
+    private var currentCandidate: ProposalCandidate?
+    private var currentPending: PendingQuestion? { currentCandidate?.question }
     private var assessmentStartedAt: Date?
     private var assessmentIntervals: [(Date, Date)] = []
 
@@ -550,11 +551,15 @@ final class KeyboardViewController: UIInputViewController {
             return
         }
         // 追加: サーバーの最新質問1件を取りに行く（応答は main で返る）。
-        client.fetchPendingQuestion(participantID: narrativeState.participantID) { [weak self] pending in
+        client.fetchProposal(participantID: narrativeState.participantID,
+                             source: narrativeState.proposalDataSource) { [weak self] candidate in
             guard let self else { return }
             guard self.currentPending == nil, !self.researchInputMode else { return } // 追加: 待っている間に表示された場合は出さない
-            if let pending {
-                if ResearchPresentation.canShow(pending) { self.presentQuestion(pending, now: Date()) }
+            if let candidate {
+                // 追加: プレビューはサーバー評価済みなので実質問用の端末内ゲートを再適用しない。
+                if candidate.isPreview || ResearchPresentation.canShow(candidate.question) {
+                    self.presentQuestion(candidate, now: Date())
+                }
             } else {
                 // A configured server owns the shared budget. No competing fallback questions.
             }
@@ -573,20 +578,24 @@ final class KeyboardViewController: UIInputViewController {
         let typing = typingMetrics.snapshot(now: now) // 追加: 現在の打鍵特徴（本文なし）
 
         guard let pending = narrativeEngine.nextQuestion(now: now, isFirstKeyboardUseToday: isFirst, typing: typing) else { return } // 追加: 出題なし
-        if ResearchPresentation.canShow(pending, now: now) { presentQuestion(pending, now: now) }
+        if ResearchPresentation.canShow(pending, now: now) {
+            presentQuestion(ProposalCandidate(question: pending, isPreview: false), now: now)
+        }
     }
 
     /// 追加: 質問をバナーへ提示し、表示済みとして記録する。
-    private func presentQuestion(_ pending: PendingQuestion, now: Date) {
-        assessmentStartedAt = now
-        var p = pending // 追加: questionShownAt を埋めるため可変にする
+    private func presentQuestion(_ candidate: ProposalCandidate, now: Date) {
+        if !candidate.isPreview { assessmentStartedAt = now }
+        var p = candidate.question // 追加: questionShownAt を埋めるため可変にする
         if p.expiresAt == nil { p.expiresAt = now.addingTimeInterval(3600) }
         p.questionShownAt = now // 追加: 表示時刻
-        ResearchPresentation.record(p, now: now)
-        if p.context.externalTrigger == "server-v2" { ResearchWorkflow.questionState(p, "shown") }
-        currentPending = p // 追加: 回答保存で参照
-        narrativeState.markShown(kind: p.kind, at: now) // 追加: cooldown 起点を記録
-        keyboardView.showQuestion(p) // 追加: バナー表示（高さ64）
+        if !candidate.isPreview {
+            ResearchPresentation.record(p, now: now)
+            if p.context.externalTrigger == "server-v2" { ResearchWorkflow.questionState(p, "shown") }
+            narrativeState.markShown(kind: p.kind, at: now) // 追加: cooldown 起点を記録
+        }
+        currentCandidate = ProposalCandidate(question: p, isPreview: candidate.isPreview)
+        keyboardView.showQuestion(p, isPreview: candidate.isPreview) // 追加: プレビュー表示を明示
         NSLog("[MFK-Narrative] question shown kind=\(p.kind.rawValue) eventType=\(p.eventType)") // 追加: デバッグ
     }
 
@@ -594,6 +603,11 @@ final class KeyboardViewController: UIInputViewController {
     private func handleOptionSelected(_ option: QuestionOption) {
         guard let pending = currentPending else { return } // 追加: 質問が無ければ無視
         if pending.expiresAt.map({ $0 <= Date() }) ?? false { dismissBanner(); evaluateNarrativeTriggers(); return }
+        if currentCandidate?.isPreview == true {
+            NSLog("[MFK-Narrative] preview option selected locally id=\(pending.id) value=\(option.value)") // 追加: サーバー送信・状態更新なし
+            dismissBanner()
+            return
+        }
         // 追加: 活動質問は2段階、夜の振り返りは5尺度を順に聞く。
         if pending.kind == .activityCheck {
             handleActivityOption(option, pending: pending)
@@ -671,6 +685,11 @@ final class KeyboardViewController: UIInputViewController {
     /// 追加:「あとで」。種別を snoozeInterval 後まで再表示しないよう記録してバナーを閉じる。
     private func handleSnooze() {
         guard let pending = currentPending else { return } // 追加: 質問が無ければ無視
+        if currentCandidate?.isPreview == true {
+            NSLog("[MFK-Narrative] preview dismissed locally id=\(pending.id)") // 追加: プレビューは端末状態も変更しない
+            dismissBanner()
+            return
+        }
         let now = Date() // 追加: 基準時刻
         narrativeState.markSnoozed(kind: pending.kind, until: now.addingTimeInterval(NarrativeConfig.snoozeInterval)) // 追加: snooze 記録
         NSLog("[MFK-Narrative] snooze kind=\(pending.kind.rawValue)") // 追加: デバッグ
@@ -681,6 +700,11 @@ final class KeyboardViewController: UIInputViewController {
     /// 追加: 回答保存フロー。NarrativeEvent を作り、解析（Mock）→ PMTT → repo.save → 状態更新までを行う。
     ///       この経路は textDocumentProxy を一切呼ばない。
     private func saveAnswer(pending: PendingQuestion, answer: QuestionAnswer) {
+        if currentCandidate?.isPreview == true {
+            NSLog("[MFK-Narrative] preview answer discarded locally id=\(pending.id)") // 追加: 保存・送信・セッション状態更新なし
+            dismissBanner()
+            return
+        }
         let now = Date() // 追加: 回答時刻
         let typing = typingMetrics.snapshot(now: now) // 追加: 打鍵特徴（本文なし）
         var event = NarrativeEvent.make(from: pending, answer: answer, typing: typing, answeredAt: now) // 追加: イベント生成
@@ -728,7 +752,7 @@ final class KeyboardViewController: UIInputViewController {
     private func dismissBanner() {
         if let start = assessmentStartedAt { assessmentIntervals.append((start, Date())) }
         assessmentStartedAt = nil
-        currentPending = nil // 追加: 表示中質問を解除
+        currentCandidate = nil // 追加: 表示中質問とプレビュー性を解除
         researchInputMode = false // 追加: 研究入力を確実に解除
         researchDraft = "" // 追加: 下書きを消す
         researchChosenOptionValue = nil // 追加: 選択退避を消す

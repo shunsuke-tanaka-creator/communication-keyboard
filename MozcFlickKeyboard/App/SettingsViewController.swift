@@ -163,6 +163,14 @@ final class SettingsViewController: UIViewController {
         narrativeState.narrativeEnabled = sender.isOn // 追加: 質問機能の有効/無効を保存
     }
 
+    /// 追加: 提案データソースを App Group へ保存し、表示中画面へ即時通知する。
+    @objc private func proposalDataSourceChanged(_ sender: UISegmentedControl) {
+        guard ProposalDataSource.allCases.indices.contains(sender.selectedSegmentIndex) else { return }
+        narrativeState.proposalDataSource = ProposalDataSource.allCases[sender.selectedSegmentIndex]
+        NotificationCenter.default.post(name: ProposalDataSource.didChangeNotification, object: nil)
+        ResearchNotificationCoordinator.shared.cancelDisallowed() // 追加: プレビューモードでは既存の研究通知も残さない
+    }
+
     // 追加: 疑似センサー受信 ON/OFF。ON にした瞬間から（前面なので）待ち受けを開始する。
     @objc private func sensorReceiveChanged(_ sender: UISwitch) {
         narrativeState.sensorReceiveEnabled = sender.isOn // 追加: 設定を保存
@@ -298,7 +306,7 @@ extension SettingsViewController: UITableViewDataSource {
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         if section == 1 { return schedules.count } // 変更: 予定の件数
-        if section == 2 { return 6 } // 変更: 参加者ID / 質問機能 / 疑似センサー受信 / 受信ポート / 接続先案内 / Backend URL（追加）
+        if section == 2 { return 7 } // 変更: データソース行を追加
         return items.count
     }
 
@@ -384,9 +392,9 @@ extension SettingsViewController: UITableViewDataSource {
             return cell
         }
 
-        // 変更: section2「研究設定（お天気分）」は6行構成。
-        // 0: 参加者ID / 1: 質問機能 / 2: 疑似センサー受信 ON/OFF / 3: 受信ポート / 4: 接続先の案内（IP・状態）
-        // 5: Backend URL（既定 MacBook http://100.106.185.3:8000。空文字を保存すると送信・取得しない）
+        // 変更: section2「研究設定（お天気分）」にデータソース選択を追加。
+        // 0: 参加者ID / 1: 質問機能 / 2: データソース / 3: 疑似センサー受信 / 4: 受信ポート
+        // 5: 接続先の案内（IP・状態）/ 6: Backend URL
         if indexPath.section == 2 {
             let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
             cell.selectionStyle = .none
@@ -406,6 +414,18 @@ extension SettingsViewController: UITableViewDataSource {
             }
 
             if indexPath.row == 2 {
+                var config = cell.defaultContentConfiguration()
+                config.text = "提案のデータソース"
+                config.secondaryText = "サンプルを含む候補はプレビューとして表示します"
+                cell.contentConfiguration = config
+                let selector = UISegmentedControl(items: ProposalDataSource.allCases.map(\.displayName))
+                selector.selectedSegmentIndex = ProposalDataSource.allCases.firstIndex(of: narrativeState.proposalDataSource) ?? 0
+                selector.addTarget(self, action: #selector(proposalDataSourceChanged(_:)), for: .valueChanged)
+                cell.accessoryView = selector
+                return cell
+            }
+
+            if indexPath.row == 3 {
                 // 追加: 疑似センサー受信 ON/OFF のスイッチ行。
                 var config = cell.defaultContentConfiguration()
                 config.text = "疑似センサー受信"
@@ -419,7 +439,7 @@ extension SettingsViewController: UITableViewDataSource {
                 return cell
             }
 
-            if indexPath.row == 4 {
+            if indexPath.row == 5 {
                 // 追加: 接続先の案内行（Python CLI に渡す IP とポート、稼働状態）。
                 var config = cell.defaultContentConfiguration()
                 config.text = "接続先"
@@ -448,7 +468,7 @@ extension SettingsViewController: UITableViewDataSource {
                 field.text = narrativeState.participantID // 追加: 現在値を反映（既定 p001）
                 field.placeholder = "p001"
                 field.tag = NarrativeFieldTag.participantID.rawValue // 追加
-            } else if indexPath.row == 5 {
+            } else if indexPath.row == 6 {
                 titleLabel.text = "Backend URL" // 追加: 研究サーバー（MacBook）
                 field.text = narrativeState.backendBaseURL // 追加: 現在値を反映（未保存なら既定のMac、空なら送信しない）
                 field.placeholder = NarrativeState.recommendedBackendURL // 変更: MacBook の Tailscale IP

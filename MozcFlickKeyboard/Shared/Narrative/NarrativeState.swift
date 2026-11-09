@@ -32,6 +32,8 @@ public enum NarrativeSettingsKeys {
     public static let participantID = "narrative.participantID"
     /// 追加: 送信先ベース URL（v0.1 研究サーバー / 空なら送信しない）
     public static let backendBaseURL = "narrative.backendBaseURL"
+    /// 追加: 提案データソース（actual / sample / combined）
+    public static let proposalDataSource = "narrative.proposalDataSource"
     /// 追加: 疑似センサー受信の ON/OFF（研究設定）。同一 LAN からの HTTP 受信を許可するか。
     public static let sensorReceiveEnabled = "narrative.sensorReceiveEnabled"
     /// 追加: 疑似センサー受信ポート（研究設定 / 既定 8770）
@@ -270,6 +272,15 @@ public final class NarrativeState {
     public var backendBaseURL: String {
         get { defaults?.string(forKey: NarrativeSettingsKeys.backendBaseURL) ?? Self.recommendedBackendURL }
         set { defaults?.set(newValue, forKey: NarrativeSettingsKeys.backendBaseURL) }
+    }
+
+    /// 追加: 提案データソース。未設定・不正値は actual とし、既存動作を維持する。
+    public var proposalDataSource: ProposalDataSource {
+        get {
+            guard let raw = defaults?.string(forKey: NarrativeSettingsKeys.proposalDataSource) else { return .actual }
+            return ProposalDataSource(rawValue: raw) ?? .actual
+        }
+        set { defaults?.set(newValue.rawValue, forKey: NarrativeSettingsKeys.proposalDataSource) }
     }
 
     /// 追加: 疑似センサー受信の ON/OFF。既定 false（明示的に有効化してもらう）。

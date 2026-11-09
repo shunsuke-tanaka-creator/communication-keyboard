@@ -86,6 +86,46 @@ public final class ResearchAPIClient {
         }.resume()
     }
 
+    /// 追加: 設定に応じて実質問またはサーバー評価済みプレビュー候補を取得する。
+    public func fetchProposal(participantID: String,
+                              source: ProposalDataSource,
+                              completion: @escaping (ProposalCandidate?) -> Void) {
+        switch ProposalFetchRoute.route(for: source) {
+        case .pending:
+            fetchPendingQuestion(participantID: participantID) { question in
+                completion(question.map { ProposalCandidate(question: $0, isPreview: false) })
+            }
+        case .preview(let dataMode):
+            fetchPreview(participantID: participantID, dataMode: dataMode) { response in
+                completion(response?.question.map { ProposalCandidate(question: $0, isPreview: true) })
+            }
+        }
+    }
+
+    /// 追加: サーバー評価済みの read-only 提案プレビューを取得する。
+    public func fetchPreview(participantID: String,
+                             dataMode: String,
+                             completion: @escaping (PreviewResponse?) -> Void) {
+        let encoded = participantID.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? participantID
+        guard let base = endpoint("api/research/\(encoded)/proposal-preview"),
+              var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            completion(nil)
+            return
+        }
+        components.queryItems = [URLQueryItem(name: "data_mode", value: dataMode)]
+        guard let url = components.url else { completion(nil); return }
+        session.dataTask(with: url) { data, response, error in
+            let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+            NSLog("[MFK-Research] proposal preview mode=\(dataMode) status=\(code) error=\(String(describing: error))") // 追加: デバッグ
+            guard error == nil, code == 200, let data,
+                  let preview = try? NarrativeJSON.decoder.decode(PreviewResponse.self, from: data) else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            DispatchQueue.main.async { completion(preview) }
+        }.resume()
+    }
+
     /// 追加: センサーイベントをサーバーへ送る。
     public func sendSensorEvent(_ event: ResearchSensorEvent,
                                 completion: ((Bool) -> Void)? = nil) {

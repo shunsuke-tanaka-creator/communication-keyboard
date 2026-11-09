@@ -46,7 +46,9 @@ final class ResearchNotificationCoordinator: NSObject, UNUserNotificationCenterD
     func background() { timer?.invalidate(); timer = nil; scheduleRefresh() }
     func cancelDisallowed() {
         let center = UNUserNotificationCenter.current()
-        let enabled = WorkflowPreferences.current.notificationsEnabled && NarrativeState().narrativeEnabled
+        let state = NarrativeState()
+        let enabled = WorkflowPreferences.current.notificationsEnabled && state.narrativeEnabled
+            && state.proposalDataSource == .actual
         let interventions = WorkflowPreferences.current.interventionsEnabled
         center.getPendingNotificationRequests { requests in
             let ids = requests.filter { request in
@@ -66,7 +68,10 @@ final class ResearchNotificationCoordinator: NSObject, UNUserNotificationCenterD
         try? BGTaskScheduler.shared.submit(request)
     }
     func poll(completion: @escaping (Bool) -> Void = { _ in }) {
-        guard !polling, NarrativeState().narrativeEnabled, WorkflowPreferences.current.notificationsEnabled else { completion(true); return }
+        // 追加: プレビュー候補は実提案ではないためローカル通知を作らない。
+        guard !polling, NarrativeState().narrativeEnabled,
+              NarrativeState().proposalDataSource == .actual,
+              WorkflowPreferences.current.notificationsEnabled else { completion(true); return }
         polling = true
         let state = NarrativeState()
         ResearchEventOutbox().flush(baseURL: state.backendBaseURL) { _ in
