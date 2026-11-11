@@ -1,5 +1,5 @@
 // ResearchModels.swift
-// MozcFlickKeyboard — 変更: 研究サーバー（MacBook / Tailscale、既定 http://100.106.185.3:8000）とやり取りするモデル一式。
+// MozcFlickKeyboard — 変更: 研究サーバー（MacBook / Tailscale、既定 http://YOUR_SERVER:8000）とやり取りするモデル一式。
 //
 // - ResearchSessionUpload … POST /api/sessions の body（1分セッション単位の生ログ + 打鍵特徴 + 端末Context）
 // - ResearchDeviceContext … 親アプリが集めた端末Context（HealthKit / カレンダー / バッテリー / センサー最新値）
@@ -173,7 +173,6 @@ public final class ResearchContextStore {
         context.updatedAt = Date()
         guard let data = try? NarrativeJSON.encoder.encode(context) else { return }
         defaults?.set(data, forKey: Self.contextKey)
-        NSLog("[MFK-Research] context updated steps=\(context.stepCount ?? -1) battery=\(context.batteryLevel ?? -1) door=\(String(describing: context.doorOpen))") // 追加: デバッグ
     }
 
     /// 追加: センサーイベントの最新値を Context に反映する（door_open / living_presence / temperature）。

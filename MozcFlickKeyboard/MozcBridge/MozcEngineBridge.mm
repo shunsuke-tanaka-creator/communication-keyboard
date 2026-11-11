@@ -98,7 +98,7 @@ static std::string StdStringFromNSString(NSString *s) {
                 NSLog(@"[MozcEngineBridge] CreateSession に失敗しました。");
             }
         } @catch (NSException *e) {
-            NSLog(@"[MozcEngineBridge] init 中に例外: %@", e);
+            NSLog(@"[MozcEngineBridge] init failed");
             _engine.reset();
             _engineReady = NO;
         }
@@ -127,7 +127,7 @@ static std::string StdStringFromNSString(NSString *s) {
         }
 #endif
     } @catch (NSException *e) {
-        NSLog(@"[MozcEngineBridge] reset 例外: %@", e);
+        NSLog(@"[MozcEngineBridge] reset failed");
     }
 }
 
@@ -175,7 +175,7 @@ static std::string StdStringFromNSString(NSString *s) {
         }
 #endif
     } @catch (NSException *e) {
-        NSLog(@"[MozcEngineBridge] insertText 例外: %@", e);
+        NSLog(@"[MozcEngineBridge] insertText failed");
     }
 }
 
@@ -197,7 +197,7 @@ static std::string StdStringFromNSString(NSString *s) {
         }
 #endif
     } @catch (NSException *e) {
-        NSLog(@"[MozcEngineBridge] deleteBackward 例外: %@", e);
+        NSLog(@"[MozcEngineBridge] deleteBackward failed");
     }
 }
 
@@ -217,7 +217,7 @@ static std::string StdStringFromNSString(NSString *s) {
 #endif
         return [self stubResultConverting:YES];
     } @catch (NSException *e) {
-        NSLog(@"[MozcEngineBridge] requestConversion 例外: %@", e);
+        NSLog(@"[MozcEngineBridge] requestConversion failed");
         return [self emptyResult];
     }
 }
@@ -231,7 +231,7 @@ static std::string StdStringFromNSString(NSString *s) {
 #endif
         return [self stubResultConverting:NO];
     } @catch (NSException *e) {
-        NSLog(@"[MozcEngineBridge] requestPrediction 例外: %@", e);
+        NSLog(@"[MozcEngineBridge] requestPrediction failed");
         return [self emptyResult];
     }
 }
@@ -261,17 +261,12 @@ static std::string StdStringFromNSString(NSString *s) {
                 _lastOutput = command.output();
             }
             // 追加(デバッグ): SubmitCandidate 後の result / preedit を確認する。
-            NSLog(@"[MozcEngineBridge] selectCandidate id=%d has_result=%d result='%@' has_preedit=%d",
-                  index,
-                  _lastOutput.has_result(),
-                  _lastOutput.has_result() ? NSStringFromStdString(_lastOutput.result().value()) : @"(none)",
-                  _lastOutput.has_preedit());
             return [self resultFromLastOutput];
         }
 #endif
         return [self stubResultConverting:YES];
     } @catch (NSException *e) {
-        NSLog(@"[MozcEngineBridge] selectCandidate 例外: %@", e);
+        NSLog(@"[MozcEngineBridge] selectCandidate failed");
         return [self emptyResult];
     }
 }
@@ -291,7 +286,7 @@ static std::string StdStringFromNSString(NSString *s) {
 #endif
         return [self stubResultConverting:YES];
     } @catch (NSException *e) {
-        NSLog(@"[MozcEngineBridge] moveFocusBy 例外: %@", e);
+        NSLog(@"[MozcEngineBridge] moveFocusBy failed");
         return [self emptyResult];
     }
 }
@@ -303,7 +298,7 @@ static std::string StdStringFromNSString(NSString *s) {
 #endif
         return [self stubResultConverting:YES];
     } @catch (NSException *e) {
-        NSLog(@"[MozcEngineBridge] resizeFocusedSegmentBy 例外: %@", e);
+        NSLog(@"[MozcEngineBridge] resizeFocusedSegmentBy failed");
         return [self emptyResult];
     }
 }
@@ -332,16 +327,12 @@ static std::string StdStringFromNSString(NSString *s) {
                 }
             }
             // 追加(デバッグ): commit の Submit 後 result を確認する。
-            NSLog(@"[MozcEngineBridge] commit has_output=%d has_result=%d committed='%@'",
-                  command.has_output(),
-                  _lastOutput.has_result(),
-                  committed);
             _lastOutput.Clear();
         }
 #endif
         return committed;
     } @catch (NSException *e) {
-        NSLog(@"[MozcEngineBridge] commit 例外: %@", e);
+        NSLog(@"[MozcEngineBridge] commit failed");
         return @"";
     }
 }
@@ -362,7 +353,7 @@ static std::string StdStringFromNSString(NSString *s) {
         // かな入力状態（変換前）へ戻す。
         return [self stubResultConverting:NO];
     } @catch (NSException *e) {
-        NSLog(@"[MozcEngineBridge] cancelConversion 例外: %@", e);
+        NSLog(@"[MozcEngineBridge] cancelConversion failed");
         return [self emptyResult];
     }
 }

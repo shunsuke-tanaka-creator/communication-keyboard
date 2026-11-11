@@ -30,7 +30,7 @@ public final class MockNarrativeAnalyzer: NarrativeAnalyzer {
     ///   negative ← bad / slightly_tired / tired / difficult
     ///   positive ← good / helpful
     ///   neutral  ← それ以外（normal など）や nil
-    private func emotionClass(for value: String?) -> String {
+    public func emotionClass(for value: String?) -> String {
         switch value {
         case "bad", "slightly_tired", "tired", "difficult":
             return "negative"

@@ -1,0 +1,22 @@
+name: Validate iOS (manual)
+on:
+  workflow_dispatch:
+    inputs:
+      simulator:
+        description: Installed simulator destination
+        required: true
+        default: 'platform=iOS Simulator,name=iPhone 16'
+permissions:
+  contents: read
+jobs:
+  simulator:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: ./scripts/generate_xcode_project.sh
+      - name: Test without Mozc device artifacts
+        env:
+          SIMULATOR: ${{ inputs.simulator }}
+        run: xcodebuild test -project MozcFlickKeyboard.xcodeproj -scheme MozcFlickKeyboard -destination "$SIMULATOR" CODE_SIGNING_ALLOWED=NO

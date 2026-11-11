@@ -6,7 +6,7 @@
 //   narrative_yyyyMMdd.jsonl … 回答済み NarrativeEvent
 //   context_yyyyMMdd.jsonl   … 質問を伴わない ContextEvent
 //   unsent_narrative.jsonl   … 変更: 旧バージョンの送信失敗分。現在は RemoteRepository が ResearchOutbox へ移行するだけで新規には書かない
-// App Group が無い / IO 失敗のいずれでもクラッシュせず黙って何もしない。
+// App Group が無い / IO 失敗は false を返す。回答済み化は呼び出し側で止める。
 
 import Foundation
 
@@ -18,6 +18,7 @@ public final class NarrativeStore {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyyMMdd"
+        f.timeZone = TimeZone(identifier: "Asia/Tokyo")
         return f
     }()
 
@@ -50,22 +51,20 @@ public final class NarrativeStore {
     // MARK: - 追記
 
     /// 回答済み NarrativeEvent を当日ファイルへ1行追記する。
-    public func appendNarrative(_ event: NarrativeEvent) {
+    @discardableResult
+    public func appendNarrative(_ event: NarrativeEvent) -> Bool {
         let url = narrativeFileURL(for: event.answeredAt ?? event.detectedAt)
         let ok = append(event, to: url)
         NSLog("[MFK-Narrative] appendNarrative kind=\(event.question.kind.rawValue) ok=\(ok)") // デバッグ: 回答保存
+        return ok
     }
 
     /// ContextEvent を当日ファイルへ1行追記する。
-    public func appendContext(_ event: ContextEvent) {
+    @discardableResult
+    public func appendContext(_ event: ContextEvent) -> Bool {
         let ok = append(event, to: contextFileURL(for: event.detectedAt))
         NSLog("[MFK-Narrative] appendContext type=\(event.eventType) ok=\(ok)") // デバッグ: 文脈保存
-    }
-
-    /// 送信できなかった NarrativeEvent を退避キューへ追記する。
-    public func appendUnsent(_ event: NarrativeEvent) {
-        let ok = append(event, to: unsentFileURL())
-        NSLog("[MFK-Narrative] appendUnsent event_id=\(event.eventID) ok=\(ok)") // デバッグ: 送信退避
+        return ok
     }
 
     // MARK: - 読み出し
@@ -104,18 +103,8 @@ public final class NarrativeStore {
 
     /// Encodable 1件を指定ファイルへ JSONL として追記する。失敗しても throw しない。
     private func append<T: Encodable>(_ value: T, to url: URL?) -> Bool {
-        guard let dir = Self.directoryURL, let url else { return false }
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        if !FileManager.default.fileExists(atPath: url.path) {
-            FileManager.default.createFile(atPath: url.path, contents: nil)
-        }
-        guard var line = try? NarrativeJSON.encoder.encode(value) else { return false }
-        line.append(0x0A) // 改行(LF)
-        guard let handle = try? FileHandle(forWritingTo: url) else { return false }
-        handle.seekToEndOfFile()
-        handle.write(line)
-        try? handle.close()
-        return true
+        guard let url, let data = try? NarrativeJSON.encoder.encode(value) else { return false }
+        return ResearchPersistence.appendJSONLine(data, to: url)
     }
 
     /// JSONL を1行ずつデコードして配列にする。壊れた行は読み飛ばす。

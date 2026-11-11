@@ -4,18 +4,18 @@
 // LocalRepository … 常に JSONL へ保存（Phase1 の本体）
 // RemoteRepository … 回答・文脈を永続キューに保存し、MacBookへPOSTする。
 //                    URL未設定・失敗時はキューに保持し、旧unsent_narrativeも移行する。
-// NarrativeRepositoryHub … local(必ず) + remote(best-effort) へ同時に流す唯一の入口。
+// NarrativeRepositoryHub … local + durable remote queue (both must succeed) へ同時に流す唯一の入口。
 // 変更: 研究サーバー（MacBook / Tailscale）連携のため、一度削除した送信層を復活させた。
-// 呼び出し側に completion を要求せず、throw もしない（キーボード拡張から安全に呼べるようにする）。
+// 永続化の成否をBoolで返す。通信成功とは別の状態。
 
 import Foundation
 
 /// 保存先の共通インターフェース。
 public protocol NarrativeRepository {
     /// 回答済み micro-diary を保存する。
-    func save(_ event: NarrativeEvent)
+    func save(_ event: NarrativeEvent) -> Bool
     /// 質問を伴わない文脈イベントを保存する。
-    func saveContext(_ event: ContextEvent)
+    func saveContext(_ event: ContextEvent) -> Bool
 }
 
 /// App Group の JSONL へ保存するローカル実装。
@@ -28,12 +28,14 @@ public final class LocalRepository: NarrativeRepository {
         self.store = store
     }
 
-    public func save(_ event: NarrativeEvent) {
-        store.appendNarrative(event)
+    @discardableResult
+    public func save(_ event: NarrativeEvent) -> Bool {
+        return store.appendNarrative(event)
     }
 
-    public func saveContext(_ event: ContextEvent) {
-        store.appendContext(event)
+    @discardableResult
+    public func saveContext(_ event: ContextEvent) -> Bool {
+        return store.appendContext(event)
     }
 }
 
@@ -48,14 +50,18 @@ public final class RemoteRepository {
         self.store = store
     }
 
-    public func save(_ event: NarrativeEvent) {
-        outbox.enqueue(event, route: "api/narrative-events", id: event.eventID)
+    @discardableResult
+    public func save(_ event: NarrativeEvent) -> Bool {
+        guard outbox.enqueue(event, route: "api/narrative-events", id: event.eventID) else { return false }
         flushUnsent()
+        return true
     }
 
-    public func saveContext(_ event: ContextEvent) {
-        outbox.enqueue(event, route: "api/context-events", id: event.eventID)
+    @discardableResult
+    public func saveContext(_ event: ContextEvent) -> Bool {
+        guard outbox.enqueue(event, route: "api/context-events", id: event.eventID) else { return false }
         flushUnsent()
+        return true
     }
 
     public func flushUnsent(completion: @escaping (Bool) -> Void = { _ in }) {
@@ -69,12 +75,12 @@ public final class RemoteRepository {
     }
 }
 
-/// ローカル（必ず）+ リモート（best-effort）へ流す集約入口。呼び出し側はこれだけ使えばよい。
+/// ローカルと永続送信キュー（両方成功が必要）へ流す集約入口。呼び出し側はこれだけ使えばよい。
 public final class NarrativeRepositoryHub: NarrativeRepository {
 
     /// ローカル保存。
     private let local: LocalRepository
-    /// リモート送信（URL 未設定なら実質 no-op）。
+    /// リモート送信キュー（URL 未設定でも保持、通信のみ停止）。
     private let remote: RemoteRepository
 
     /// backendBaseURL は NarrativeState.backendBaseURL を渡す想定。
@@ -83,14 +89,16 @@ public final class NarrativeRepositoryHub: NarrativeRepository {
         self.remote = RemoteRepository(baseURL: baseURL, store: store)
     }
 
-    public func save(_ event: NarrativeEvent) {
-        local.save(event)
-        remote.save(event)
+    @discardableResult
+    public func save(_ event: NarrativeEvent) -> Bool {
+        guard local.save(event) else { return false }
+        return remote.save(event)
     }
 
-    public func saveContext(_ event: ContextEvent) {
-        local.saveContext(event)
-        remote.saveContext(event)
+    @discardableResult
+    public func saveContext(_ event: ContextEvent) -> Bool {
+        guard local.saveContext(event) else { return false }
+        return remote.saveContext(event)
     }
 
     /// 退避キューの再送（キーボード表示時などに呼ぶ）。

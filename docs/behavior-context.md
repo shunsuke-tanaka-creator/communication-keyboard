@@ -9,7 +9,7 @@
 - 未送信の旧 `place_visit` は送信せずローカルで `.gps-disabled` として隔離する。他の入力・回答は従来どおり再送する。
 - 新しい `placeCheck` と `taskCheck` に親アプリ・キーボードの両方で回答できる。確認対象は独立しており、タスクを変更しても拠点の正解は変わらない。
 - 質問に回答した時刻ではなく、質問発行時までの5分間をラベルにする。外出中の回答や通信の遅れを別の滞在に誤って割り当てない。質問IDを使った永続outboxで重複再送を吸収する。
-- 拠点・タスクの確認も既存の合計質問予算（既定4回/日）を使う。自動質問をOFFにすると停止する。
+- 拠点・タスクの確認は合計1回/日で軸を交互にし、全体4回/日の共通予算を使う。自動質問をOFFにすると停止する。
 
 ## 表示と訂正
 
@@ -31,7 +31,7 @@ xcodebuild test -project MozcFlickKeyboard.xcodeproj -scheme MozcFlickKeyboard -
 期待：生成成功、対応Simulatorで `** TEST SUCCEEDED **`。
 意図しない出力：`No such module` / `Unable to find a destination` / `** TEST FAILED **`。既存の環境・Simulator名・Mozc SDK別リンク設定を確認する。
 
-今回の環境では全Swiftファイルの構文解析とJSON契約の確認を実施した。Xcode/iOS SDKがないため型検査・XCTest実行・実機通知は未確認。
+今回の環境では設定・plist・JSON契約と静的参照を確認した。Swiftコンパイラはない。Xcode/iOS SDKがないため型検査・XCTest実行・実機通知は未確認。
 
 実機では次を確認する。
 

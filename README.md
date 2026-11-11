@@ -1,234 +1,73 @@
 # MozcFlickKeyboard
 
-iPhone専用の日本語フリックキーボードです。変換は端末内で実行します。MacBook統合版では、記録された入力本文・文脈・活動回答・端末ContextをTailscale経由でMacに同期し、SwitchBotの開閉ログと合わせて「くらしのログ」に表示します。接続先の初期値は `http://100.106.185.3:8000`、空欄にすると同期を停止します。セットアップと制限は [docs/macbook-lifelog.md](docs/macbook-lifelog.md) を参照してください。
+iOS用フリック/QWERTYキーボードと研究ログ収集アプリです。かな漢字変換はMozc、SimulatorはLocalStubEngineを使います。候補学習・ユーザー辞書は端末内で動作します。入力・回答・HealthKit/予定などの研究ログは、設定した [Pythonサーバー](https://github.com/shunsuke-tanaka-creator/switch_bot_python) へ同期します。
 
-> 研究用途（久保田研究室）で開発しています。名称・商標について「Google 日本語入力」の名称は使用しません（[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) 参照）。
+GPS分類・座標収集・位置による通知起動は廃止しています。拠点とタスクは行動情報と本人回答で別々に扱います。
 
----
+## 開発環境とビルド
 
-## 概要
+macOS、Xcode（iOS 15以上を対象にできるSDK）、XcodeGen、実機MozcビルドにはBazelisk・git・rsyncが必要です。今回のLinux作業環境ではXcodeビルドを実行していません。
 
-- **対象**: iPhone（iPad 非対応 / `TARGETED_DEVICE_FAMILY = 1`）
-- **入力方式**: 12 キーフリック入力（トグル入力併用可）
-- **変換エンジン**: Mozc（C++）を iOS 向けにクロスビルドし、Swift から呼び出す（実機のみ。シミュレータは `LocalStubEngine`）
-- **変換はオフライン**: 変換・学習・ユーザー辞書は端末内で完結（研究ログの同期は別経路。下記）
-- **構成**: ホストアプリ（くらしのログ・設定・お天気分・ログ閲覧・端末Context取得）＋ Keyboard Extension（実際の入力・入力ログ・質問バナー）
+SimulatorはMozcの取得・辞書生成をせずに構成できます。
 
-### 研究機能「お天気分」（micro-diary）
+```sh
+./scripts/generate_xcode_project.sh
+xcodebuild test -project MozcFlickKeyboard.xcodeproj -scheme MozcFlickKeyboard -destination 'platform=iOS Simulator,name=iPhone 16' CODE_SIGNING_ALLOWED=NO
+```
 
-- キーボード上部に短い質問バナーを1問だけ表示します（朝の気分、22時以降の夜の振り返り5項目、外出先・外出の評価、センサー由来の疲労確認、サーバーからの活動質問など）。1〜2 タップまたは短い自由記述で回答できる、研究用のマイクロ日記機能です。
-- 回答は研究データ（`NarrativeEvent`）として端末内に保存し、**ホストアプリのテキスト欄には一切挿入しません**。Backend URL が設定されていれば Mac へ送信します。
-- 入力セッション（キー操作・確定本文・前後文脈・打鍵特徴・端末Context）は別の研究ログ経路で Mac へ同期します。
-- MacBook統合版の Backend URL 初期値は `http://100.106.185.3:8000` です。明示的に空欄にすると同期を停止します。
-- 取得・送信するデータの全一覧は [docs/privacy.md](docs/privacy.md) にあります。
+期待：プロジェクト生成成功、利用可能なSimulatorで `** TEST SUCCEEDED **`。
+意図しない出力：`xcodegen が見つかりません` / `Unable to find a destination` / `** TEST FAILED **`。必要ツールとインストール済みSimulator名を確認します。Simulator変換はstubで、実Mozcの品質検証にはなりません。
 
-主要ドキュメント:
+実機用Mozcは次の順で準備します。初回は外部依存の取得と長時間ビルドを伴います。
 
-| ドキュメント | 内容 |
-| --- | --- |
-| [docs/architecture.md](docs/architecture.md) | 全体構成 / ターゲット責務 / Swift↔C++ 境界 / 状態遷移 |
-| [docs/ios-keyboard-limitations.md](docs/ios-keyboard-limitations.md) | Custom Keyboard Extension の制約 |
-| [docs/testing.md](docs/testing.md) | テスト方針と実行方法 |
-| [docs/privacy.md](docs/privacy.md) | 取得データ全一覧・保存場所・Macへの送信経路 |
-| [docs/macbook-lifelog.md](docs/macbook-lifelog.md) | MacBook + SwitchBot 統合ログの運用 |
-| [docs/narrative-integration.md](docs/narrative-integration.md) | お天気分（micro-diary）の設計・データモデル・操作/テスト方法・残課題 |
-| [docs/performance.md](docs/performance.md) | 性能目標と測定方法 |
-| [docs/troubleshooting.md](docs/troubleshooting.md) | ビルドエラーと解決 |
-| [docs/initial-research.md](docs/initial-research.md) | Mozc の取得元・固定バージョン・ビルド方式調査（調査担当が記載） |
-
----
-
-## スクリーンショット
-
-スクリーンショットは `docs/screenshots/` に配置してください（未作成の場合は同ディレクトリを作成）。
-
-- `docs/screenshots/keyboard.png` … 12 キーフリックキーボード
-- `docs/screenshots/host-app.png` … ホストアプリ（くらしのログ・設定）
-
-（プレースホルダ: 実機ビルド後に追加）
-
----
-
-## 対応環境
-
-- **iOS**: 15.0 以上（`IPHONEOS_DEPLOYMENT_TARGET = 15.0`）
-- **デバイス**: iPhone のみ
-- **開発機**: macOS（Apple Silicon 推奨）+ Xcode
-- **Swift**: 5.0
-
----
-
-## 必要ツール
-
-| ツール | 用途 | 導入例 |
-| --- | --- | --- |
-| Xcode | ビルド・署名・実機インストール | App Store |
-| Xcode Command Line Tools | `xcode-select` 等 | `xcode-select --install` |
-| bazelisk | Mozc（C++）の Bazel ビルド | `brew install bazelisk` |
-| git | ソース取得 | 同梱 / `brew install git` |
-| XcodeGen（任意） | `.xcodeproj` 生成 | `brew install xcodegen` |
-
-> Mozc の正確な取得元・固定バージョン・必要ツールの詳細は [docs/initial-research.md](docs/initial-research.md) を参照してください（調査担当が記載）。
-
----
-
-## 初回セットアップ
-
-```bash
-# 1) リポジトリ取得
-git clone <このリポジトリのURL> MozcFlickKeyboard
-cd MozcFlickKeyboard/20270713
-
-# 2) ビルド前提の確認と Mozc ソース取得（bazelisk / Xcode の存在チェック込み）
+```sh
 ./scripts/bootstrap.sh
-
-# 3) Mozc を iOS 向けにビルド（.a / .xcframework を out/mozc に生成）
-#    ※ 初回は依存取得を含み数十分〜数時間かかる場合があります。
 ./scripts/build_mozc_ios.sh
-
-# 4) Xcode プロジェクト生成（下記参照）
 ./scripts/generate_xcode_project.sh
 ```
 
----
+期待：固定SHA/patchの確認、arm64静的ライブラリ・辞書・必要ヘッダの検証後に `build_mozc_ios 完了`。
+意図しない出力：revision不一致、patch競合、Bazel失敗、成果物不足。非0で停止し、既存checkoutを勝手に更新しません。元のローカルMozcに独自差分がある場合は保存して比較してください。
 
-## Mozc の取得方法と固定バージョン
+固定元は既存調査文書のMozcタグ `2.32.5994.102`、対応commit `d9c3f195582de6b0baa07ecb81a04e8902acf9af`。`scripts/mozc-revision.txt`、`.bazelversion`（8.4.1）、`scripts/patches/mozc-ios-archive.patch` を管理します。以前のMac成功環境の未共有diffとの同一性は確認できておらず、**今回管理したpatchのclean実機ビルドは未検証**です。新しい版へ自動fallbackしません。
 
-- 取得は `scripts/bootstrap.sh` が行います（`third_party/mozc` へ shallow clone）。
-- 変更: `scripts/bootstrap.sh` の既定値は `MOZC_REPO_URL=https://github.com/google/mozc.git`、`MOZC_REVISION=master` です（固定されていません）。選定したリビジョンとライセンスは [docs/initial-research.md](docs/initial-research.md) を参照してください。
-- 環境変数で上書き可能:
+成功した成果物は `out/mozc/` の `libmozc_ios.a`、`mozc.data`、`include/`、`build-manifest.txt`。一時ディレクトリで検証後に切り替え、前回成果物を `out/mozc-previous.*` に残します。実機SDKだけ辞書をアプリへコピーし、欠落ならビルドを止めます。XCFrameworkは生成しません。bridgeは固定上流と同じC++20でコンパイルします。
 
-```bash
-MOZC_REPO_URL="https://github.com/google/mozc.git" \
-MOZC_REVISION="<docs/initial-research.md の選定リビジョン>" \
-  ./scripts/bootstrap.sh
-```
+## 署名・設定
 
----
+`Config/Project.xcconfig` の `PRODUCT_BUNDLE_PREFIX` と `APP_GROUP_ID` が共有設定です。既存値は `com.tanaka05.MozcFlickKeyboard` / `group.com.tanaka05.MozcFlickKeyboard` を維持します。target IDとBGTask識別子はprefixを参照します。TeamはXcodeのSigning & Capabilitiesで選択してください。
 
-## iOS ビルド方法
+App GroupをApp/Extensionの両方の署名へ登録します。**既存インストールのIDを変えると以前のコンテナを参照できません。** ID変更を更新手順として行わないでください。
 
-1. `./scripts/bootstrap.sh` → `./scripts/build_mozc_ios.sh` で Mozc 成果物（`out/mozc/*.a` or `*.xcframework`）を用意。
-2. `./scripts/generate_xcode_project.sh` で `.xcodeproj` を生成。
-3. Xcode で開き、ホストアプリターゲットを選択して実機ビルド。
-4. `project.yml` は実機 SDK（`iphoneos*`）のときだけ Mozc 成果物をリンクし、`MOZC_AVAILABLE` を定義します。シミュレータや未定義時は `LocalStubEngine` で動作します。
+実機で親アプリを起動し、iOS設定 → 一般 → キーボードから追加します。研究機能にはフルアクセスが必要です。設定のBackend URLに自分のMacのTailscale URLを入力します。新規の既定URLは空欄、保存済みURLは保持します。
 
-> 採用ビルド方式（Bazel）とその理由は [docs/architecture.md](docs/architecture.md) を参照。
+## 研究・プライバシー
 
----
+- フルアクセス＋プライベートモードOFFで入力ログを記録。本文・前後文脈を含みます。通常の診断ログには入力本文・回答本文を出しません。
+- プライベートモードは入力収集と候補学習を止めます。既存queueや明示的な研究回答は削除しません。通信停止にはBackend URLを空欄にします。
+- サーバー設定済みの場合、204/通信失敗では質問を表示せず、ローカル質問へfallbackしません。URL未設定時のみローカルTriggerを使います。
+- 既定4質問は現在状態・夜の振り返り・天気・拠点/タスク日替わり各1。発行判断はサーバー側です。条件を満たさない場合は4件未満です。
+- 日本語確定・英数字・記号は共通のcommitイベント。英語候補の置換は `replaces` も付けます。研究回答の入力は通常の入力欄に挿入しません。
+- 回答はローカルJSONLと送信queueの保存成功後に回答済みとします。保存失敗時はエラー表示し、自由入力/5尺度フォームを保持します。通信待ちは保存失敗と区別します。
+- 不正JSONとHTTP400/413/422は原本を `.failed-*` へ隔離して後続を送信します。401/403/429/5xxや通信断はqueueに残します。隔離は削除ではありません。
 
-## Xcode プロジェクト生成（scripts/generate_xcode_project.sh）
+詳しくは [プライバシー](docs/privacy.md)、[研究フロー](docs/narrative-integration.md)、[拠点・タスク](docs/behavior-context.md)、[サーバー接続](docs/macbook-lifelog.md)、[検証](docs/testing.md)、[監査修正一覧](docs/audit-fixes.md) を参照。
 
-`.xcodeproj` はリポジトリに含めず、スクリプトで生成する方針です。
+## 構成
 
-```bash
-./scripts/generate_xcode_project.sh
-```
+| パス | 役割 |
+| --- | --- |
+| `App/` | 設定・回答・HealthKit/予定収集・通知・サーバー画面 |
+| `Keyboard/` | フリック/QWERTY、変換候補、入力状態、質問表示 |
+| `Shared/Conversion`, `Shared/Learning`, `Shared/UserDictionary` | 端末内変換と個人化 |
+| `Shared/Research/` | API、セッション/イベントqueue、保存排他、入力イベント境界 |
+| `Shared/Narrative/` | 質問モデル、回答repository、ルール判定 |
+| `MozcBridge/` | SwiftとMozc C++の接続 |
+| `Tests/` | XCTestと共通API fixture |
+| `scripts/`, `Config/`, `docs/` | 固定ビルド手順、署名設定、仕様 |
 
-- 変更: スクリプトは XcodeGen（`brew install xcodegen`）で `project.yml` から生成します。未導入ならエラーで止まります。
-- 生成後、`Config/Project.xcconfig` の値がターゲットへ反映されます。
-
----
-
-## Bundle ID 変更方法（Config/Project.xcconfig）
-
-利用者固有の値は [`Config/Project.xcconfig`](Config/Project.xcconfig) に集約しています。ここだけ書き換えれば全ターゲットに反映されます。
-
-```
-# 例（プレースホルダ）
-PRODUCT_BUNDLE_PREFIX  = com.tanaka05.MozcFlickKeyboard      # ← 任意の逆ドメイン
-APP_GROUP_ID           = group.com.tanaka05.MozcFlickKeyboard
-```
-
-> **DEVELOPMENT_TEAM（Apple Developer Team ID）は xcconfig では指定しません。**
-> Xcode の各ターゲット > **Signing & Capabilities > Team** のプルダウンで選択してください
-> （xcconfig にハードコードすると GUI 選択が上書きされ、変更できなくなるため）。
-
-- ホストアプリ Bundle ID: `<PRODUCT_BUNDLE_PREFIX>`（例: `com.tanaka05.MozcFlickKeyboard`）
-- Keyboard Extension Bundle ID: `<PRODUCT_BUNDLE_PREFIX>.Keyboard`
-
----
-
-## App Group 設定
-
-ホストアプリと Keyboard Extension で、設定・ユーザー辞書・学習データ・入力ログ・研究データ・端末Context を共有するため App Group を使用します。
-
-1. Apple Developer で App Group `group.com.tanaka05.MozcFlickKeyboard`（= `APP_GROUP_ID`）を作成。
-2. 両ターゲットの Signing & Capabilities に **App Groups** を追加し、同じ ID を有効化。
-3. コードからは [`AppConfig.appGroupID`](MozcFlickKeyboard/Shared/AppConfig.swift) / `AppConfig.sharedContainerURL` を参照（Info.plist の `AppGroupID` キーから読み、無ければ定数へフォールバック）。
-
----
-
-## Code Signing
-
-1. Xcode > Settings > Accounts に Apple ID を追加。
-2. 各ターゲット > **Signing & Capabilities > Team** のプルダウンで Team を選択（GUI で設定）。
-3. 各ターゲットで "Automatically manage signing" を有効化（無料アカウントでも実機動作可、ただし 7 日で失効）。
-
----
-
-## 実機インストール
-
-1. iPhone を USB 接続し、Xcode で信頼を許可。
-2. ホストアプリターゲットを選び、接続端末を宛先にして Run。
-3. iPhone 側で **設定 > 一般 > VPN とデバイス管理** から開発者を信頼。
-4. ホストアプリを一度起動する（拡張の有効化に必要）。
-
----
-
-## キーボード追加方法
-
-1. iPhone の **設定 > 一般 > キーボード > キーボード > 新しいキーボードを追加**。
-2. 「MozcFlickKeyboard」を選択。
-3. 入力欄で地球儀キー長押し → 本キーボードを選択。
-
----
-
-## Full Access の要否
-
-- **入力・変換だけなら不要**（Full Access なしで動作）。
-- 変更: 次の機能は Full Access 有効時だけ動きます（`KeyboardViewController` の `hasFullAccess` 判定）:
-  - ユーザー辞書・候補学習
-  - 入力ログの記録と Mac への送信
-  - お天気分（質問バナー・「記録」・「情報」）
-  - 触覚フィードバック
-- Backend URL の既定値は MacBook（`http://100.106.185.3:8000`）です。Full Access 有効・プライベートモード OFF なら、入力ログ（確定本文・前後文脈を含む）が既定で送信されます。止めるには Backend URL を空欄にしてください。
-- 設定・予定・辞書・学習・ログは App Group 共有コンテナに保存します。
-- 制約の詳細は [docs/ios-keyboard-limitations.md](docs/ios-keyboard-limitations.md) を参照。
-
----
-
-## テスト実行方法
-
-- Xcode: `Product > Test`（⌘U）でテストターゲットを実行。
-- CLI:
-
-```bash
-xcodebuild test \
-  -project MozcFlickKeyboard.xcodeproj \
-  -scheme MozcFlickKeyboard \
-  -destination 'platform=iOS Simulator,name=iPhone 15'
-```
-
-- `project.yml` のテストターゲットでは `LOCAL_STUB_AVAILABLE` / `USER_DICT_AVAILABLE` が定義済みで、全テストが有効です。詳細は [docs/testing.md](docs/testing.md)。
-
----
-
-## トラブルシューティング
-
-代表的なビルドエラーと解決策は [docs/troubleshooting.md](docs/troubleshooting.md) にまとめています。
-
----
+ソースの上位ルートは `MozcFlickKeyboard/`。既存のApp/Extension/Shared targetを維持します。モデルの研究学習はPython側で行います。
 
 ## ライセンス
 
-- 本プロジェクトのライセンス: [LICENSE](LICENSE)（BSD-3-Clause）
-- Mozc 由来部分・第三者ライブラリ: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照。
-
-## 生活の気づき研究版
-
-「生活の気づき」タブに天気4分類、親アプリからの状態回答、場所の自動分類、任意の質問通知と設定を追加しました。対応サーバーと組み合わせて利用します。[起動・Xcodeテスト・実機確認](docs/otenki-workflow.md) を参照してください。
-
-## GPSを使わない拠点・タスク推定
-
-位置収集を停止し、行動文脈から推定する拠点とタスクを別々に確認・訂正できるようにしました。[更新内容・導入・実機確認](docs/behavior-context.md) を参照してください。
+Mozc・辞書・推移的依存は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) と [docs/licenses/](docs/licenses/README.md) を確認してください。過去の調査・実機記録はGit履歴と `docs/initial-research.md` / `docs/assumptions.md` に残します。現在の手順はこのREADMEを優先します。

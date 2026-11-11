@@ -102,12 +102,13 @@ final class ResearchViewController: UITableViewController {
         }
         if q.kind == .currentState || q.kind == .nightReflection {
             let form = ResearchAssessmentViewController(daily: q.kind == .nightReflection) { [weak self] values in
-                guard let self = self else { return }
+                guard let self = self else { return false }
                 if let values = values {
                     let data = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys])
-                    self.save(value: q.kind == .currentState ? "current_state" : "daily_reflection", text: data.flatMap { String(data: $0, encoding: .utf8) })
+                    return self.save(value: q.kind == .currentState ? "current_state" : "daily_reflection", text: data.flatMap { String(data: $0, encoding: .utf8) })
                 } else if !candidate.isPreview { ResearchWorkflow.questionState(q, "deferred") }
                 self.candidate = nil
+                return true
             }
             present(UINavigationController(rootViewController: form), animated: true)
             return
@@ -125,20 +126,25 @@ final class ResearchViewController: UITableViewController {
         })
         present(alert, animated: true)
     }
-    private func save(value: String, text: String? = nil) {
-        guard let candidate = candidate else { return }
+    @discardableResult
+    private func save(value: String, text: String? = nil) -> Bool {
+        guard let candidate = candidate else { return false }
         let q = candidate.question
         if candidate.isPreview {
-            NSLog("[MFK-Research] preview answered locally id=\(q.id) value=\(value)") // 追加: サーバー・セッション・端末回答状態へ影響させない
             self.candidate = nil
             status = "プレビューを閉じました。回答は保存・送信されません。"
             tableView.reloadData()
-            return
+            return true
         }
-        ResearchWorkflow.annotate(q, value: value)
-        NarrativeRepositoryHub(baseURL: state.backendBaseURL).save(NarrativeEvent.make(from: q,
-            answer: QuestionAnswer(label: value, freeText: text), typing: nil, answeredAt: Date(), source: "parent_app"))
+        guard ResearchWorkflow.annotate(q, value: value),
+              NarrativeRepositoryHub(baseURL: state.backendBaseURL).save(NarrativeEvent.make(from: q,
+            answer: QuestionAnswer(label: value, freeText: text), typing: nil, answeredAt: Date(), source: "parent_app")) else {
+            status = "回答を保存できませんでした。空き容量を確認して、もう一度お試しください。"
+            tableView.reloadData()
+            return false
+        }
         self.candidate = nil; status = "回答を保存しました。"; tableView.reloadData()
+        return true
     }
 }
 
@@ -180,9 +186,9 @@ final class ResearchWebViewController: UIViewController, WKNavigationDelegate {
 /// One scrollable form avoids stacking UIAlertControllers between scale answers.
 final class ResearchAssessmentViewController: UITableViewController {
     private let daily: Bool
-    private let done: ([String: Int]?) -> Void
+    private let done: ([String: Int]?) -> Bool
     private var values: [String: Int] = [:]
-    init(daily: Bool, done: @escaping ([String: Int]?) -> Void) {
+    init(daily: Bool, done: @escaping ([String: Int]?) -> Bool) {
         self.daily = daily; self.done = done; super.init(style: .insetGrouped)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -207,6 +213,14 @@ final class ResearchAssessmentViewController: UITableViewController {
         return cell
     }
     @objc private func selectValue(_ sender: UISegmentedControl) { values[StateAssessment.keys[sender.tag]] = sender.selectedSegmentIndex + 1 }
-    @objc private func cancel() { dismiss(animated: true) { self.done(nil) } }
-    @objc private func save() { dismiss(animated: true) { self.done(self.values) } }
+    @objc private func cancel() { if done(nil) { dismiss(animated: true) } }
+    @objc private func save() {
+        guard done(values) else {
+            let alert = UIAlertController(title: "回答を保存できませんでした", message: "入力した値は残っています。空き容量を確認して、もう一度保存してください。", preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "閉じる", style: .cancel))
+            present(alert, animated: true)
+            return
+        }
+        dismiss(animated: true)
+    }
 }

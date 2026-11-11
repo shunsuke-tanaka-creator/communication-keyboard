@@ -147,7 +147,6 @@ final class NarrativeDashboardViewController: UIViewController {
     private func injectSensorPreset(_ preset: SensorPreset) {
         let event = preset.makeEvent() // 追加: タップ時刻でイベント生成
         let result = sensorRouter.route(event) // 追加: 振り分け（キュー投入 + ContextEvent 保存）
-        NSLog("[MFK-Sensor] dashboard inject type=\(event.type) value=\(event.value ?? "-")") // 追加: デバッグ
 
         // 追加: 何が起きたか（次にどの質問が出るか）をユーザーへ明示する。
         var detail: String

@@ -267,7 +267,7 @@ public final class NarrativeState {
     }
 
     /// MacBookのTailscale接続先。明示的に空文字を保存すると同期を停止する。
-    public static let recommendedBackendURL = "http://100.106.185.3:8000"
+    public static let recommendedBackendURL = "" // Configure your own server explicitly.
 
     public var backendBaseURL: String {
         get { defaults?.string(forKey: NarrativeSettingsKeys.backendBaseURL) ?? Self.recommendedBackendURL }

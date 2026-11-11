@@ -96,3 +96,11 @@ UI テストは XCUITest で、キーボード表示 → キー押下 → ホス
 - `ConversionCaseTests` を変換の回帰スイートとして維持。新たな不具合を見つけたら「よみ→期待」を1行追加する運用。
 - Mozc やスタブ辞書を更新した際は本スイートを必ず実行。
 - CI では Simulator でユニット/回帰テストを実行し、実機依存（署名・キーボード追加）は手動チェックリストで補完。
+
+## 2026-11-11の監査回帰テスト
+
+`ResearchPersistenceTests` に10件追加：保存失敗、同一IDの再試行、並行JSONL追記、隔離/復帰、GPS隔離の非復帰、新しいqueue内容の保護、HTTP再試行分類、JST境界、質問バナーと回答入力の区別。
+
+この作業環境はLinuxでXcode/Swiftコンパイラがなく、追加分を含むXCTestは未実行です。`project.yml` はController実経路もテストtargetでコンパイルします。READMEのSimulatorコマンドでビルド/テスト後、実機でフルアクセス・プライベートモード、通常入力、保存容量不足、通信断→再送、旧GPS停止を確認してください。
+
+手動CIは `workflow_dispatch` のみです。自動実行はせず、MacのXcode/Simulator選択と依存導入を確認してから開始します。

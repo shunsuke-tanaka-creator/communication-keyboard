@@ -1,11 +1,10 @@
 # プライバシー方針
 
-> 更新：GPSによる場所分類・座標保存は廃止しました。現在の仕様は [behavior-context.md](behavior-context.md) を参照してください。以下のGPS訪問・場所マップの記載は旧方式です。
 
 
 この研究版（MacBook統合版）は、キーボードが記録した入力イベント（確定本文・前後文脈を含む）、お天気分の回答・文脈、端末Context（HealthKit・カレンダー・バッテリー）を Tailscale 経由で MacBook の研究サーバーへ同期します。Mac側では SwitchBot の開閉記録と合わせて SQLite に保存します。
 
-- 接続先の既定値は `http://100.106.185.3:8000`（`NarrativeState.recommendedBackendURL`）。設定画面の Backend URL を**空欄にして保存すると**送信・取得を停止します。保存済みのデータや送信待ちキューは端末に残ります。
+- 接続先の既定値は空欄（`NarrativeState.recommendedBackendURL`）。設定画面の Backend URL を**空欄にして保存すると**送信・取得を停止します。保存済みのデータや送信待ちキューは端末に残ります。
 - 操作手順は [macbook-lifelog.md](macbook-lifelog.md) を参照してください。
 
 ---
@@ -17,7 +16,7 @@
 - Full Access が有効で、かつプライベートモードが OFF のとき、`SessionLogger` が入力イベントを記録します。Backend URL が設定されていれば、セッション終了ごとに本文を含むセッションを Mac へ送信します。
 - お天気分の回答と文脈イベントは、端末内の JSONL に保存したうえで永続キュー（`ResearchEventOutbox`）からMacへ送信します。失敗した分は次の同期で再送します。Mac側ではイベントIDで重複を防ぎます。
 - 送信先は設定した研究サーバーだけです。広告・解析SDK・クラウドAIには送信しません。通信は平文 HTTP です（`NSAllowsArbitraryLoads = true`）。Tailscale の経路暗号化を前提にしています。
-- `PrivacyInfo.xcprivacy` は本ドキュメントの内容に合わせてあります。研究版では `project.yml` のホストアプリのリソースとして同梱します。場所IDを用いる任意の外出研究機能も記載しています。
+- `PrivacyInfo.xcprivacy` は本ドキュメントの内容に合わせてあります。研究版では `project.yml` のホストアプリのリソースとして同梱します。GPS位置情報を取得する機能はありません。
 
 ---
 
@@ -37,7 +36,7 @@
 | `conversion` | よみ、**候補一覧（`|` 区切り）**、文節よみ、変換回数 |
 | `candidate` | 選択した候補ID、選択後の文字列 |
 | `cancel` | 変換取消時のよみ |
-| `commit` | **確定文字列（本文）** |
+| `commit` | **日本語・英数字・記号の確定本文**。英語候補は置換した接頭辞 `replaces` も含む |
 | `context` | **カーソル前後のテキスト（`documentContextBeforeInput` / `AfterInput`）・選択テキスト**。確定・実削除・スペース・改行の直後に記録 |
 | `space` / `return` / `nextKeyboard` | 押下したという事実 |
 | `moveFocus` / `moveCursor` | 文節フォーカスやカーソルの移動量 |
@@ -46,7 +45,7 @@
 
 セッションには次も付きます: `session_id`、`participant_id`、`device_id`、開始・終了時刻、終了理由（`interval` / `idle_timeout` / `keyboard_hidden`）、打鍵特徴（2.2）、端末Context（2.3）。
 
-- お天気分の自由記述入力中（研究入力モード）は、入力したかなと本文を `SessionLogger` に記録せず、入力欄（`textDocumentProxy`）にも挿入しません。ただし `key` イベント（キーID・フリック方向）は `KeyboardView` から常に通知されるため、研究入力モード中も記録されます。
+- お天気分の自由記述入力中（研究入力モード）は、入力したかなと本文を `SessionLogger` に記録せず、入力欄（`textDocumentProxy`）にも挿入しません。研究入力モードの `key` も記録対象から除外します。通常入力は質問バナーが表示されているだけなら記録します。
 - `isSecureTextEntry` の欄では、iOS がカスタムキーボードの代わりに標準キーボードを表示するため、記録されません。
 
 ### 2.2 打鍵特徴（`TypingMetrics` → `TypingFeatures`）
@@ -70,9 +69,9 @@
 | センサー最新値 | `door_open` / `living_presence` / `temperature` | 疑似センサー受信時に更新 |
 | 更新時刻 | `updated_at` | — |
 
-- 取得タイミング: 親アプリが前面になるたび（`sceneDidBecomeActive`）。HealthKit はこれに加えて、`HKObserverQuery` + `enableBackgroundDelivery(.hourly)` により約1時間ごとに取得します（`AppDelegate` で開始）。端末ロック中は HealthKit を読めません。
+- 取得タイミング: 親アプリが前面になるたび（`sceneDidBecomeActive`）。HealthKit はこれに加えて、`HKObserverQuery` + `enableBackgroundDelivery(.hourly)` によりiOSが許す機会に取得します（1時間間隔の指定であり定時実行保証ではありません）（`AppDelegate` で開始）。端末ロック中は HealthKit を読めません。
 - キーボード下部の「情報」ボタンを押すと、保存済みの HealthKit 7項目を表示します。表示処理は App Group の読み取りだけです。
-- `ContextSnapshot.calendar_busy` は `CalendarContextProvider` が stub のため常に `false` です。予定は出題判定には使っていません。
+- `ContextSnapshot.calendar_busy` は `CalendarContextProvider` が stub のため常に `false` です。ローカルTriggerでは予定を使いません。設定済みサーバーは鮮度付きカレンダーを出題判定に使います。
 
 ### 2.4 お天気分の回答（`NarrativeEvent`）
 
@@ -184,3 +183,9 @@ App Group `group.com.tanaka05.MozcFlickKeyboard` の共有コンテナ:
 - `learning.json` と `user_dictionary.json` には `FileProtectionType.completeUntilFirstUserAuthentication` を明示的に設定しています。
 - その他のファイル（入力ログ・送信キュー・Narrative・安否確認）には保護属性を個別に設定していません。OS の既定値に従います。
 - 端末のパスコード設定によって保護の強さが変わります。パスコードの設定を推奨します。
+
+## 監査修正後の保存と診断
+
+入力本文・候補・回答をNSLogへ出しません。研究収集ログは同意した保存条件下で本文を含みます。回答JSONLはApp/Extension間の排他付き追記、送信queueは1イベント1ファイルです。ローカル/queue保存失敗はUIへ返します。
+
+400/413/422や壊れたJSONは `.failed-*` に原本を残し隔離します。通信断・認証エラー・rate limit・サーバーエラーは未送信queueに保持します。隔離ファイルも機密データであり、送信済み・削除済みと扱いません。旧GPS訪問は `.gps-disabled` に隔離して送信しません。

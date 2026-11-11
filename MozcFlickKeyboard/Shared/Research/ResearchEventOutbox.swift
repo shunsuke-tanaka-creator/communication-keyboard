@@ -7,11 +7,12 @@ public final class ResearchEventOutbox {
     private static var directory: URL? {
         AppConfig.sharedContainerURL?.appendingPathComponent("Library/Application Support/ResearchOutbox", isDirectory: true)
     }
-    public init() {}
+    private let storageDirectory: URL?
+    public init(directory: URL? = nil) { storageDirectory = directory ?? Self.directory }
 
     @discardableResult
     public func enqueue<T: Encodable>(_ event: T, route: String, id: String) -> Bool {
-        guard let directory = Self.directory else { return false }
+        guard let directory = storageDirectory else { return false }
         do {
             let body = try NarrativeJSON.encoder.encode(event)
             let hash = SHA256.hash(data: Data((route + id).utf8)).map { String(format: "%02x", $0) }.joined()
@@ -23,7 +24,7 @@ public final class ResearchEventOutbox {
 
     public var pendingCount: Int { files.count }
     private var files: [URL] {
-        guard let directory = Self.directory else { return [] }
+        guard let directory = storageDirectory else { return [] }
         return ((try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension == "json" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
@@ -42,6 +43,7 @@ public final class ResearchEventOutbox {
         guard let data = try? Data(contentsOf: file), let entry = try? JSONDecoder().decode(Entry.self, from: data) else {
             // Another process may already have acknowledged the same event.
             if !FileManager.default.fileExists(atPath: file.path) { send(files, index: index + 1, root: root, completion: completion) }
+            else if ResearchPersistence.quarantine(file, reason: "decode") { send(files, index: index + 1, root: root, completion: completion) }
             else { completion(false) }
             return
         }
@@ -57,9 +59,13 @@ public final class ResearchEventOutbox {
         request.httpBody = entry.body
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         URLSession.shared.dataTask(with: request) { [self] _, response, error in
-            guard error == nil, let response = response as? HTTPURLResponse, (200..<300).contains(response.statusCode) else {
-                completion(false); return
+            guard error == nil, let response = response as? HTTPURLResponse else { completion(false); return }
+            if ResearchPersistence.isPermanentHTTPFailure(response.statusCode) {
+                guard ResearchPersistence.quarantine(file, reason: String(response.statusCode), expected: data) else { completion(false); return }
+                send(files, index: index + 1, root: root, completion: completion)
+                return
             }
+            guard (200..<300).contains(response.statusCode) else { completion(false); return }
             if (try? Data(contentsOf: file)) == data { try? FileManager.default.removeItem(at: file) }
             send(files, index: index + 1, root: root, completion: completion)
         }.resume()

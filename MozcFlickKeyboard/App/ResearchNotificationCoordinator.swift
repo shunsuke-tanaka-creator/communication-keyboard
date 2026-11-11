@@ -7,7 +7,7 @@ import MozcFlickShared
 /// iOS chooses background execution times; this is not a continuous polling daemon.
 final class ResearchNotificationCoordinator: NSObject, UNUserNotificationCenterDelegate {
     static let shared = ResearchNotificationCoordinator()
-    static let refreshID = "com.tanaka05.MozcFlickKeyboard.research-refresh"
+    static var refreshID: String { (Bundle.main.bundleIdentifier ?? "com.tanaka05.MozcFlickKeyboard") + ".research-refresh" }
     static let openQuestion = Notification.Name("ResearchOpenQuestion")
     private var polling = false
     private var timer: Timer?
