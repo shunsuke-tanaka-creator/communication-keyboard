@@ -17,3 +17,5 @@
 実施した検証：plist/JSON/YAML、シェル構文、pinned上流へのpatch適用チェック、両repoの契約fixture照合、参照/差分の静的確認。Swiftコンパイルを実施済みとは扱わない。
 
 Python側と同時に変更を確認する。v2の受信cutoff/全入力commitを使うモデルは旧v1と区別して再学習する。既存DB、保存済みURL、App Group、Bundle ID、旧queueを消す移行は行わない。
+
+2026-11-12追検証：PRごとのSimulator CIを追加。性能テストの検索準備を1件ごとの全辞書保存から既存の一括インポートへ変更し、1000/10000件の件数・検索結果を検証。登録性能テストは保存失敗を無視せず失敗を報告します。CI用ActionはNode 24対応版のcommitへ固定しています。

@@ -78,7 +78,7 @@ UI テストは XCUITest で、キーボード表示 → キー押下 → ホス
 
 ## 6. 性能テスト
 
-- `UserDictionaryTests` の `measure` ブロックで 100 / 1000 / 10000 件の登録・検索を計測。
+- `UserDictionaryTests` は100件の登録と1000/10000件からの検索を計測。検索の準備は既存のJSON一括インポートで行い、計測外の全辞書書込みを繰り返しません。件数と検索結果を検証し、一時ディレクトリを終了時に削除します。
 - 変換系の初期化・候補生成時間は [performance.md](performance.md) の目標値に対して計測。
 - XCTest のパフォーマンスベースラインを記録し、回帰を検出する。
 
@@ -103,4 +103,4 @@ UI テストは XCUITest で、キーボード表示 → キー押下 → ホス
 
 この作業環境はLinuxでXcode/Swiftコンパイラがなく、追加分を含むXCTestは未実行です。`project.yml` はController実経路もテストtargetでコンパイルします。READMEのSimulatorコマンドでビルド/テスト後、実機でフルアクセス・プライベートモード、通常入力、保存容量不足、通信断→再送、旧GPS停止を確認してください。
 
-手動CIは `workflow_dispatch` のみです。自動実行はせず、MacのXcode/Simulator選択と依存導入を確認してから開始します。
+CIはmain向けPRと `workflow_dispatch` で起動します。macOS 15 runnerでXcode/XcodeGenの版を記録し、インストール済みのiPhone Simulatorを自動選択します。Mozc実機成果物と署名は不要です。結果は `ios-test-results` artifactへ保存します。手動起動時はSimulatorのdestinationを指定できます。
