@@ -40,15 +40,17 @@ MozcFlickKeyboard のテストは「単体」「UI」「実機」の 3 層です
 xcodebuild test \
   -project MozcFlickKeyboard.xcodeproj \
   -scheme MozcFlickKeyboard \
-  -destination 'platform=iOS Simulator,name=iPhone 15'
+  -destination 'platform=iOS Simulator,name=iPhone 16'
 ```
+
+期待：`** TEST SUCCEEDED **`。意図しない出力：`Unable to find a destination` / `** TEST FAILED **`。端末名はインストール済みSimulatorに合わせます。
 
 フラグは定義済みのため、追加指定なしで実行できます。CLI で明示する例:
 ```bash
 xcodebuild test \
   -project MozcFlickKeyboard.xcodeproj \
   -scheme MozcFlickKeyboard \
-  -destination 'platform=iOS Simulator,name=iPhone 15' \
+  -destination 'platform=iOS Simulator,name=iPhone 16' \
   OTHER_SWIFT_FLAGS='-D LOCAL_STUB_AVAILABLE -D USER_DICT_AVAILABLE'
 ```
 
@@ -101,6 +103,6 @@ UI テストは XCUITest で、キーボード表示 → キー押下 → ホス
 
 `ResearchPersistenceTests` に10件追加：保存失敗、同一IDの再試行、並行JSONL追記、隔離/復帰、GPS隔離の非復帰、新しいqueue内容の保護、HTTP再試行分類、JST境界、質問バナーと回答入力の区別。
 
-この作業環境はLinuxでXcode/Swiftコンパイラがなく、追加分を含むXCTestは未実行です。`project.yml` はController実経路もテストtargetでコンパイルします。READMEのSimulatorコマンドでビルド/テスト後、実機でフルアクセス・プライベートモード、通常入力、保存容量不足、通信断→再送、旧GPS停止を確認してください。
+2026-11-12にGitHub ActionsのmacOS 15 / Xcode 16.4 / XcodeGen 2.46.0でSimulatorビルドと保存関連10テストの成功を確認しました。全体の最新結果は[Validate iOS](https://github.com/shunsuke-tanaka-creator/communication-keyboard/actions/workflows/validate.yml)を参照してください。`project.yml` はController実経路もテストtargetでコンパイルします。READMEのSimulatorコマンドでビルド/テスト後、実機でフルアクセス・プライベートモード、通常入力、保存容量不足、通信断→再送、旧GPS停止を確認してください。
 
 CIはmain向けPRと `workflow_dispatch` で起動します。macOS 15 runnerでXcode/XcodeGenの版を記録し、インストール済みのiPhone Simulatorを自動選択します。Mozc実機成果物と署名は不要です。結果は `ios-test-results` artifactへ保存します。手動起動時はSimulatorのdestinationを指定できます。

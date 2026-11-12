@@ -12,9 +12,9 @@
 
 未使用Mock推薦を削除。旧PMTTLink/InterventionEvent/lastUsedの外部利用は判断できないためdeprecatedとして互換維持。感情分類は共通Analyzerへ統一。未送信セッションqueueと回答入力区間の変換処理をController/APIから分離。変換モデルのparameter/辞書形式は変更しない。
 
-固定Mozcの元は既存文書の2.32.5994.102。上流commitとBUILD定義を照合しpatchを作成したが、ユーザーのMac成功環境にある未共有diffを取得していない。clean実機ビルド・XCTest・署名・実機通知・容量不足・プロセス間競合の実機確認は未実施。新しいビルド経路が成功するとの保証はしていない。
+固定Mozcの元は既存文書の2.32.5994.102。上流commitとBUILD定義を照合しpatchを作成したが、ユーザーのMac成功環境にある未共有diffを取得していない。clean実機ビルド・署名・実機通知・容量不足・プロセス間競合の実機確認は未実施。新しいビルド経路が成功するとの保証はしていない。
 
-実施した検証：plist/JSON/YAML、シェル構文、pinned上流へのpatch適用チェック、両repoの契約fixture照合、参照/差分の静的確認。Swiftコンパイルを実施済みとは扱わない。
+実施した検証：plist/JSON/YAML、シェル構文、pinned上流へのpatch適用チェック、両repoの契約fixture照合、参照/差分の静的確認。2026-11-12のmacOS CIでSimulatorのSwiftコンパイルと追加の保存関連10テストの成功を確認。全体テストの最新結果は[CI](https://github.com/shunsuke-tanaka-creator/communication-keyboard/actions/workflows/validate.yml)を参照。実機Mozc成果物のコンパイル結果とは区別する。
 
 Python側と同時に変更を確認する。v2の受信cutoff/全入力commitを使うモデルは旧v1と区別して再学習する。既存DB、保存済みURL、App Group、Bundle ID、旧queueを消す移行は行わない。
 

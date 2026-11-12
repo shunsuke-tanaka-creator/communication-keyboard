@@ -6,7 +6,7 @@ GPS分類・座標収集・位置による通知起動は廃止しています�
 
 ## 開発環境とビルド
 
-macOS、Xcode（iOS 15以上を対象にできるSDK）、XcodeGen、実機MozcビルドにはBazelisk・git・rsyncが必要です。今回のLinux作業環境ではXcodeビルドを実行していません。
+macOS、Xcode（iOS 15以上を対象にできるSDK）、XcodeGen、実機MozcビルドにはBazelisk・git・rsyncが必要です。SimulatorのビルドとXCTestは[GitHub Actions](https://github.com/shunsuke-tanaka-creator/communication-keyboard/actions/workflows/validate.yml)のmacOS 15環境で実行します。2026-11-12の検証環境はXcode 16.4 / XcodeGen 2.46.0です。実機Mozcビルド・署名の検証とは区別します。
 
 SimulatorはMozcの取得・辞書生成をせずに構成できます。
 
