@@ -34,7 +34,21 @@ final class UserDictionaryTests: XCTestCase {
     private func makeStore() throws -> UserDictionaryStore {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("UserDictTests-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
         return try UserDictionaryStore(baseURL: dir)
+    }
+
+    /// Lookup benchmarks seed once; repeated full-file writes are not part of lookup.
+    private func makePopulatedStore(count: Int) throws -> UserDictionaryStore {
+        let result = try makeStore()
+        let entries = (0..<count).map {
+            UserDictionaryEntry(reading: "よみ\($0)", word: "語\($0)", partOfSpeech: .noun)
+        }
+        let data = try DictionaryImportExport.exportJSON(entries: entries)
+        let report = try DictionaryImportExport.importJSON(data, into: result)
+        XCTAssertEqual(report.importedCount, count)
+        XCTAssertEqual(result.count, count)
+        return result
     }
 
     // MARK: - 登録と読みからの候補取得
@@ -113,29 +127,29 @@ final class UserDictionaryTests: XCTestCase {
 
     func testPerformanceInsert100() throws {
         measure {
-            guard let s = try? makeStore() else { return }
-            for i in 0..<100 {
-                try? s.add(reading: "よみ\(i)", word: "語\(i)", partOfSpeech: .noun)
+            do {
+                let s = try makeStore()
+                for i in 0..<100 {
+                    try s.add(reading: "よみ\(i)", word: "語\(i)", partOfSpeech: .noun)
+                }
+                XCTAssertEqual(s.count, 100)
+            } catch {
+                XCTFail("Dictionary insertion failed: \(error)")
             }
         }
     }
 
     func testPerformanceLookupIn1000() throws {
-        let s = try makeStore()
-        for i in 0..<1000 {
-            try s.add(reading: "よみ\(i)", word: "語\(i)", partOfSpeech: .noun)
-        }
+        let s = try makePopulatedStore(count: 1000)
+        XCTAssertEqual(s.entries(forExactReading: "よみ999").first?.word, "語999")
         measure {
             _ = s.entries(forExactReading: "よみ999")
         }
     }
 
     func testPerformanceLookupIn10000() throws {
-        let s = try makeStore()
-        for i in 0..<10000 {
-            try s.add(reading: "よみ\(i)", word: "語\(i)", partOfSpeech: .noun)
-        }
-        XCTAssertEqual(s.allEntries().count, 10000)
+        let s = try makePopulatedStore(count: 10000)
+        XCTAssertEqual(s.entries(forExactReading: "よみ9999").first?.word, "語9999")
         measure {
             _ = s.entries(forExactReading: "よみ9999")
         }

@@ -216,6 +216,7 @@ public final class LearningStore {
     }
 
     /// 指定よみ+語の最終使用日時（タイブレーク用）。
+    @available(*, deprecated, message: "No in-repository consumer; ranking uses frequency")
     public func lastUsed(reading rawReading: String, word: String) -> Date? {
         let reading = ReadingNormalizer.normalize(rawReading)
         return records[key(reading: reading, word: word)]?.lastUsedAt

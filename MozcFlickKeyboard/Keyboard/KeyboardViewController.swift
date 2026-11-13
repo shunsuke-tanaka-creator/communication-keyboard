@@ -188,9 +188,11 @@ final class KeyboardViewController: UIInputViewController {
             ])
         }
         NSLog("[MFK] viewWillAppear session started=\(started)") // 追加: セッション開始のデバッグ
-        narrativeRepo.flushUnsent() // 追加: オフライン退避分の回答があれば再送を試みる
-        ResearchAPIClient(baseURL: narrativeState.backendBaseURL).flushPendingSessions() // 追加: 未送信セッションを再送
-        evaluateNarrativeTriggers() // 変更: サーバー最新質問を優先し、無ければローカルTriggerへフォールバック
+        if hasFullAccess {
+            narrativeRepo.flushUnsent()
+            ResearchAPIClient(baseURL: narrativeState.backendBaseURL).flushPendingSessions()
+        }
+        evaluateNarrativeTriggers() // 変更: サーバー最新質問を優先し、URL未設定時のみローカルTriggerを利用
     }
 
     /// 追加: プライベートモード OFF のときだけ記録を有効化する共通ヘルパ。
@@ -224,18 +226,14 @@ final class KeyboardViewController: UIInputViewController {
                                             startedAt: session.startedAt,
                                             endedAt: session.endedAt,
                                             closeReason: session.closeReason,
-                                            events: session.events.map { event in
-                                                var data = event.data
-                                                if let time = NarrativeJSON.dateFormatter.date(from: event.time), assessmentIntervals.contains(where: { time >= $0.0 && time <= $0.1 }) || (assessmentStartedAt.map { time >= $0 } ?? false) {
-                                                    data["purpose"] = "assessment"
-                                                }
-                                                return SessionEvent(time: event.time, type: event.type, data: data)
-                                            },
+                                            events: ResearchSessionEvents.markAssessments(session.events, intervals: assessmentIntervals, activeStart: assessmentStartedAt),
                                             typing: typing,
                                             context: researchContextStore.load())
         NSLog("[MFK-Research] session closed id=\(session.sessionID) reason=\(session.closeReason) events=\(session.events.count)") // 追加: デバッグ
         assessmentIntervals.removeAll { $0.1 < session.startedAt }
-        ResearchAPIClient(baseURL: narrativeState.backendBaseURL).upload(payload)
+        if !ResearchAPIClient(baseURL: narrativeState.backendBaseURL).upload(payload) {
+            NSLog("[MFK-Research] session queue save failed; local session log retained")
+        }
     }
 
     /// 変更: 予定配列から表示内容を決める。判定順は「安否確認チェック対象 → 次の予定」。
@@ -250,10 +248,6 @@ final class KeyboardViewController: UIInputViewController {
 
         // 追加: 安否確認チェック対象を最優先で判定する。
         let checked = SafetyCheckLog.checkedKeys(on: now)
-        // 追加: 各予定がなぜチェック対象になる/ならないかを可視化するデバッグログ。
-        for it in items {
-            NSLog("[MFK] schedule item time=\(it.time) text='\(it.text)' needsCheck=\(it.needsCheck) weekdays=\(it.weekdays) active=\(it.isActive(on: now)) inWindow=\(it.isInWindow(nowMinutes: nowMinutes)) checked=\(checked.contains(it.logKey)) nowMinutes=\(nowMinutes)")
-        }
         let target = items
             .filter { $0.needsCheck && $0.isActive(on: now) && $0.isInWindow(nowMinutes: nowMinutes) && !checked.contains($0.logKey) }
             .sorted { ($0.minutes ?? 0) < ($1.minutes ?? 0) }
@@ -539,7 +533,7 @@ final class KeyboardViewController: UIInputViewController {
         keyboardView.onInfoClose = { [weak self] in self?.keyboardView.hideQuestion() } // 追加: Info ページ「閉じる」
     }
 
-    /// 変更: 出題判定。サーバー（v0.1）の最新質問を優先し、未設定・無し・失敗ならローカル Trigger へフォールバックする。
+    /// 変更: 出題判定。サーバー（v0.1）の最新質問を優先し、URL未設定時のみローカル Trigger を利用する。
     ///       安否確認が出ている間・機能OFF・既に質問表示中・Full Access 無しは何もしない（同時1問）。
     private func evaluateNarrativeTriggers() {
         guard narrativeState.narrativeEnabled else { return } // 追加: 機能OFFなら早期リターン
@@ -589,7 +583,6 @@ final class KeyboardViewController: UIInputViewController {
 
     /// 追加: 質問をバナーへ提示し、表示済みとして記録する。
     private func presentQuestion(_ candidate: ProposalCandidate, now: Date) {
-        if !candidate.isPreview { assessmentStartedAt = now }
         var p = candidate.question // 追加: questionShownAt を埋めるため可変にする
         if p.expiresAt == nil { p.expiresAt = now.addingTimeInterval(3600) }
         p.questionShownAt = now // 追加: 表示時刻
@@ -608,7 +601,6 @@ final class KeyboardViewController: UIInputViewController {
         guard let pending = currentPending else { return } // 追加: 質問が無ければ無視
         if pending.expiresAt.map({ $0 <= Date() }) ?? false { dismissBanner(); evaluateNarrativeTriggers(); return }
         if currentCandidate?.isPreview == true {
-            NSLog("[MFK-Narrative] preview option selected locally id=\(pending.id) value=\(option.value)") // 追加: サーバー送信・状態更新なし
             dismissBanner()
             return
         }
@@ -635,7 +627,6 @@ final class KeyboardViewController: UIInputViewController {
             keyboardView.showQuestionOptions(prompt: "\(category.label)のうち、どれですか？",
                                              options: ResearchActivityCatalog.activityOptions(for: category),
                                              allowFreeText: false)
-            NSLog("[MFK-Narrative] activity category=\(category.value)") // 追加: デバッグ
             return
         }
         if option.value == ResearchActivityCatalog.otherFreeTextValue {
@@ -643,9 +634,9 @@ final class KeyboardViewController: UIInputViewController {
             researchChosenOptionValue = selectedActivityCategory.map { "other:\($0.value)" } ?? "other"
             researchDraft = ""
             researchInputMode = true
+            assessmentStartedAt = Date()
             keyboardView.setResearchFreeTextMode(true)
             keyboardView.setResearchDraft(researchDraft)
-            NSLog("[MFK-Narrative] activity other free text label=\(researchChosenOptionValue ?? "-")") // 追加: デバッグ
             return
         }
         // 追加: 2段目 → 詳細活動の value を保存する。
@@ -673,7 +664,6 @@ final class KeyboardViewController: UIInputViewController {
         }
         let jsonData = try? JSONSerialization.data(withJSONObject: dailyScaleAnswers, options: [.sortedKeys])
         let json = jsonData.flatMap { String(data: $0, encoding: .utf8) }
-        NSLog("[MFK-Narrative] daily reflection done answers=\(json ?? "-")") // 追加: デバッグ
         saveAnswer(pending: pending,
                    answer: QuestionAnswer(label: pending.kind == .currentState ? "current_state" : "daily_reflection", freeText: json))
     }
@@ -716,27 +706,26 @@ final class KeyboardViewController: UIInputViewController {
         // 追加: 解析は Mock（同期的に emotion/experienceType を算出）。UI を止めない軽量処理。
         let value = answer.label ?? answer.freeText // 追加: 判定入力
         let experience = narrativeAnalyzer.experienceClass(for: value, kind: pending.kind) // 追加: 経験タイプ
-        let emotion = emotionClass(for: value) // 追加: 感情ラベル
+        let emotion = narrativeAnalyzer.emotionClass(for: value) // 追加: 感情ラベル
         event.narrative = NarrativeEvent.Narrative(summary: event.narrative?.summary, emotion: emotion, experienceType: experience) // 追加: 解析結果を反映
         event.pmtt = narrativePMTT.link(event: event) // 追加: PMTT ノード対応付け
 
-        if let value = answer.label { ResearchWorkflow.annotate(pending, value: value) }
-        narrativeRepo.save(event) // 追加: ローカル JSONL + リモート best-effort（throw しない）
+        guard (answer.label.map { ResearchWorkflow.annotate(pending, value: $0) } ?? true),
+              narrativeRepo.save(event) else {
+            showResearchSaveFailure()
+            return
+        }
         narrativeState.markAnswered(kind: pending.kind, on: now) // 追加: 当日回答済み・1日上限に反映
         narrativeState.updateTypingBaseline(with: typing) // 追加: 打鍵ベースライン更新
-        NSLog("[MFK-Narrative] answer saved kind=\(pending.kind.rawValue) emotion=\(emotion) exp=\(experience)") // 追加: デバッグ
 
         consumeManualEventsIfNeeded(for: pending) // 追加: 外出/帰宅由来なら手動イベントを消費
         dismissBanner() // 追加: バナーを閉じる
     }
 
-    /// 追加: 感情ラベルの簡易マッピング（Analyzer の emotionClass 相当を同期で持つ）。
-    private func emotionClass(for value: String?) -> String {
-        switch value {
-        case "bad", "slightly_tired", "tired", "difficult": return "negative"
-        case "good", "helpful": return "positive"
-        default: return "neutral"
-        }
+    private func showResearchSaveFailure() {
+        let alert = UIAlertController(title: "回答を保存できませんでした", message: "空き容量とApp Group設定を確認して、もう一度保存してください。", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "閉じる", style: .cancel))
+        present(alert, animated: true)
     }
 
     /// 変更: 外出先/外出評価の回答を保存したら手動イベントを、センサー由来なら保留質問キューを取り除く（二重処理防止）。
@@ -778,7 +767,8 @@ final class KeyboardViewController: UIInputViewController {
             researchChosenOptionValue = nil // 追加: 選択肢は未選択（自由記述のみ）
         }
         researchDraft = "" // 追加: 下書き初期化
-        researchInputMode = true // 追加: モード ON（入力ハンドラの分岐に使う）
+        researchInputMode = true
+        assessmentStartedAt = Date() // 追加: モード ON（入力ハンドラの分岐に使う）
         keyboardView.setResearchFreeTextMode(true) // 追加: バナーを自由記述 UI へ
         keyboardView.setResearchDraft(researchDraft) // 追加: 空の下書きを表示
         NSLog("[MFK-Narrative] research-mode enter kind=\(pending.kind.rawValue)") // 追加: デバッグ
@@ -790,12 +780,13 @@ final class KeyboardViewController: UIInputViewController {
         let trimmed = researchDraft.trimmingCharacters(in: .whitespacesAndNewlines) // 追加: 前後空白を除去
         let answer = QuestionAnswer(label: researchChosenOptionValue, freeText: trimmed.isEmpty ? nil : trimmed) // 追加: 回答生成
         NSLog("[MFK-Narrative] research-mode exit(commit) length=\(trimmed.count)") // 追加: デバッグ（本文は出さない）
-        researchInputMode = false // 追加: モード OFF（保存前に解除）
         saveAnswer(pending: pending, answer: answer) // 追加: 保存フロー（内部で dismiss）
     }
 
     /// 追加: 自由記述「キャンセル」。保存せず選択肢表示へ戻す（質問は残す）。
     private func cancelResearchInputMode() {
+        if let start = assessmentStartedAt { assessmentIntervals.append((start, Date())) }
+        assessmentStartedAt = nil
         researchInputMode = false // 追加: モード OFF
         researchDraft = "" // 追加: 下書き破棄
         researchChosenOptionValue = nil // 追加: 選択退避破棄
@@ -832,7 +823,6 @@ final class KeyboardViewController: UIInputViewController {
         guard currentPending == nil, !researchInputMode else { return } // 追加: 質問表示中/研究入力中は開かない（同時1問）
         let context = researchContextStore.load() // 追加: 最新 Context（未保存なら nil）
         keyboardView.showInfo(text: Self.infoText(from: context)) // 追加: 7項目を整形して表示
-        NSLog("[MFK-Narrative] info page shown steps=\(context?.stepCount ?? -1)") // 追加: デバッグ
     }
 
     /// 追加: Context を Info ページ用の複数行テキストへ整形する。値が無い項目は「--」。
@@ -910,6 +900,7 @@ extension KeyboardViewController: KeyboardActionDelegate {
             if !inputState.currentResult.composition.isEmpty { commitAndInsert() }
             textDocumentProxy.insertText(kana)
             sessionLogger.log(type: "kana", data: ["kana": kana, "input_mode": String(describing: keyboardView.inputMode)])
+            sessionLogger.log(type: "commit", data: ["text": kana, "input_mode": String(describing: keyboardView.inputMode)])
             logContext()
             refreshInputTraits()
             return
@@ -917,7 +908,6 @@ extension KeyboardViewController: KeyboardActionDelegate {
         typingMetrics.recordKeystroke(at: Date()) // 追加: 打鍵を集計（本文は渡さず時刻のみ）
         if inputState.currentResult.isConverting { commitAndInsert() }
         let result = inputState.input(fixed: kana)
-        NSLog("[MFK] keyboardDidInput kana='\(kana)' -> composition='\(result.composition)' candidates=\(result.candidates.count)") // 追加: 入力とcompositionのデバッグ
         // 追加: 入力かなと未確定よみ・候補数を記録。
         sessionLogger.log(type: "kana", data: [
             "kana": kana,
@@ -930,7 +920,7 @@ extension KeyboardViewController: KeyboardActionDelegate {
 
     // 追加: 押された生のキー操作（キーID・フリック方向）を記録する。
     func keyboardDidPressKey(keyID: String, direction: String) {
-        guard !researchInputMode, currentPending == nil else { return }
+        guard !researchInputMode else { return }
         sessionLogger.log(type: "key", data: ["keyID": keyID, "direction": direction])
     }
 
@@ -951,7 +941,6 @@ extension KeyboardViewController: KeyboardActionDelegate {
         } else {
             typingMetrics.recordBackspace(at: Date())
             let result = inputState.deleteBackward()
-            NSLog("[MFK] keyboardDidDeleteBackward -> composition='\(result.composition)'") // 追加: 削除後compositionのデバッグ
             sessionLogger.log(type: "delete", data: ["target": "composition", "input_mode": String(describing: keyboardView.inputMode), "composition": result.composition]) // 追加: 未確定削除を記録
             syncInline(result) // 変更: 未確定を入力欄へインライン反映
         }
@@ -991,6 +980,7 @@ extension KeyboardViewController: KeyboardActionDelegate {
             for _ in englishSuggestionPrefix { textDocumentProxy.deleteBackward() }
             textDocumentProxy.insertText(word)
             sessionLogger.log(type: "candidate", data: ["id": id, "selected": word, "input_mode": "alphabet"])
+            sessionLogger.log(type: "commit", data: ["text": word, "replaces": englishSuggestionPrefix, "input_mode": "alphabet"])
             refreshInputTraits()
             return
         }

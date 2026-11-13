@@ -135,7 +135,6 @@ public final class SensorEventRouter {
                                               occurredAt: at)
         ResearchAPIClient(baseURL: state.backendBaseURL).sendSensorEvent(sensorEvent)
 
-        NSLog("[MFK-Sensor] received type=\(event.type) value=\(event.value ?? "-") manual=\(manual?.rawValue ?? "-") pending=\(pending?.rawValue ?? "-") unknown=\(unknown)") // 追加: 受信デバッグ
 
         return SensorRouteResult(manualEvent: manual,
                                  pendingKind: pending,

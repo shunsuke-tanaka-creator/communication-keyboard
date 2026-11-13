@@ -140,13 +140,13 @@ final class LifeLogDashboardViewController: UITableViewController {
         switch indexPath.section {
         case 0:
             if indexPath.row == 1 {
-                content.text = "このMacBookに接続する"
-                content.secondaryText = NarrativeState.recommendedBackendURL
+                content.text = "接続先を設定する"
+                content.secondaryText = "研究サーバーのURLを設定してください"
                 content.image = UIImage(systemName: "link")
                 cell.accessoryType = .disclosureIndicator
             } else {
                 content.text = connectionMessage
-                let pending = ResearchSessionQueue().loadAll().count + ResearchEventOutbox().pendingCount
+                let pending = ResearchSessionQueue().pendingCount + ResearchEventOutbox().pendingCount
                 content.secondaryText = "\(state.backendBaseURL.isEmpty ? "接続先未設定" : state.backendBaseURL)\n参加者：\(state.participantID)・未送信 \(pending)件"
                 if let dashboard { content.secondaryText! += "\n最終取得：\(time(dashboard.generatedAt, full: true))" }
                 if let scanner = dashboard?.scanner {
@@ -205,8 +205,7 @@ final class LifeLogDashboardViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
         if indexPath.section == 0, indexPath.row == 1 {
-            state.backendBaseURL = NarrativeState.recommendedBackendURL
-            refresh()
+            settings()
         } else if indexPath.section == 2, let devices = dashboard?.devices, indexPath.row < devices.count {
             rename(devices[indexPath.row])
         } else if indexPath.section == 4, let items = dashboard?.timeline {

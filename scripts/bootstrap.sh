@@ -2,23 +2,23 @@
 # =============================================================================
 # bootstrap.sh
 # 目的  : Mozc iOS ビルドの前提を整える。bazelisk と xcode-select の確認、
-#         および Mozc ソースの取得（shallow clone）を行う。
-# 期待出力: third_party/mozc/ に Mozc ソースが存在する状態。冪等（既にあれば skip）。
+#         および固定 Mozc ソースと管理 patch の準備を行う。
+# 期待出力: third_party/mozc/ に Mozc ソースが存在する状態。既存 checkout の SHA と patch も検証する。
 # 失敗時 : 不足ツール名・原因を明示して非0で終了する。
 # =============================================================================
 set -euo pipefail
 
 # --- 設定 -------------------------------------------------------------------
 # Mozc の取得元と固定リビジョン。安定性のため特定コミットに固定する。
-# （実際のビルド時はメインエージェントが必要に応じて更新する）
 MOZC_REPO_URL="${MOZC_REPO_URL:-https://github.com/google/mozc.git}"
-# 固定したいリビジョン（タグ/ブランチ/コミット）。空なら既定ブランチの最新。
-MOZC_REVISION="${MOZC_REVISION:-master}"
+# リビジョンは scripts/mozc-revision.txt の SHA のみ。
+
 
 # スクリプトの場所からプロジェクトルートを解決（呼び出し位置に依存しない）。
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 MOZC_DIR="${PROJECT_ROOT}/third_party/mozc"
+export USE_BAZEL_VERSION="$(tr -d '[:space:]' < "${PROJECT_ROOT}/.bazelversion")"
 
 echo "==> bootstrap 開始 (project root: ${PROJECT_ROOT})"
 
@@ -49,23 +49,24 @@ if ! command -v git >/dev/null 2>&1; then
   exit 1
 fi
 
-# --- 4. Mozc ソースの取得（冪等 / shallow clone） ---------------------------
-if [ -d "${MOZC_DIR}/.git" ]; then
-  echo "==> Mozc ソースは既に存在します。clone をスキップ: ${MOZC_DIR}"
-else
-  echo "==> Mozc を shallow clone します: ${MOZC_REPO_URL} (rev: ${MOZC_REVISION})"
-  mkdir -p "$(dirname "${MOZC_DIR}")"
-  # --depth 1 で軽量に取得。特定リビジョンはブランチ/タグ指定で取得を試みる。
-  if ! git clone --depth 1 --branch "${MOZC_REVISION}" "${MOZC_REPO_URL}" "${MOZC_DIR}" 2>/dev/null; then
-    echo "WARN: branch/tag '${MOZC_REVISION}' での shallow clone に失敗。既定ブランチで再試行します。" >&2
-    if ! git clone --depth 1 "${MOZC_REPO_URL}" "${MOZC_DIR}"; then
-      echo "ERROR: Mozc の clone に失敗しました。ネットワーク / URL / リビジョンを確認してください。" >&2
-      echo "  URL: ${MOZC_REPO_URL}" >&2
-      echo "  REV: ${MOZC_REVISION}" >&2
-      exit 1
-    fi
+# --- Pinned source: never substitute a different branch or overwrite local work. ---
+MOZC_REVISION="$(tr -d '[:space:]' < "${SCRIPT_DIR}/mozc-revision.txt")"
+PATCH="${SCRIPT_DIR}/patches/mozc-ios-archive.patch"
+if [ ! -d "${MOZC_DIR}/.git" ]; then
+  if [ -e "${MOZC_DIR}" ]; then
+    echo "ERROR: existing non-git Mozc directory; preserve it and choose a clean checkout" >&2; exit 1
   fi
-  echo "==> Mozc の取得完了: ${MOZC_DIR}"
+  git clone --no-checkout "${MOZC_REPO_URL}" "${MOZC_DIR}"
+  git -C "${MOZC_DIR}" checkout --detach "${MOZC_REVISION}"
 fi
-
-echo "==> bootstrap 完了。次は scripts/build_mozc_ios.sh を実行してください。"
+if [ "$(git -C "${MOZC_DIR}" rev-parse HEAD)" != "${MOZC_REVISION}" ]; then
+  echo "ERROR: Mozc revision differs from scripts/mozc-revision.txt; local checkout left unchanged" >&2; exit 1
+fi
+if git -C "${MOZC_DIR}" apply --reverse --check "${PATCH}" 2>/dev/null; then
+  echo "==> Versioned iOS archive patch already applied"
+elif git -C "${MOZC_DIR}" apply --check "${PATCH}"; then
+  git -C "${MOZC_DIR}" apply "${PATCH}"
+else
+  echo "ERROR: local Mozc changes conflict with the versioned patch; no files overwritten" >&2; exit 1
+fi
+echo "==> bootstrap 完了: ${MOZC_REVISION}"

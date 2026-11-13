@@ -470,8 +470,8 @@ extension SettingsViewController: UITableViewDataSource {
                 field.tag = NarrativeFieldTag.participantID.rawValue // 追加
             } else if indexPath.row == 6 {
                 titleLabel.text = "Backend URL" // 追加: 研究サーバー（MacBook）
-                field.text = narrativeState.backendBaseURL // 追加: 現在値を反映（未保存なら既定のMac、空なら送信しない）
-                field.placeholder = NarrativeState.recommendedBackendURL // 変更: MacBook の Tailscale IP
+                field.text = narrativeState.backendBaseURL // 追加: 現在値を反映（未保存・空欄なら送信しない）
+                field.placeholder = "http://YOUR_SERVER:8000"
                 field.keyboardType = .URL
                 field.tag = NarrativeFieldTag.backendURL.rawValue // 追加
             } else {

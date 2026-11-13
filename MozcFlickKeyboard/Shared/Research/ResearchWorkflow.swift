@@ -74,8 +74,9 @@ public enum ResearchWorkflow {
         if saved { box.flush(baseURL: state.backendBaseURL) }
         return saved
     }
-    public static func questionState(_ q: PendingQuestion, _ value: String) {
-        emit(kind: "question_state", payload: ["question_id": .string(q.id), "state": .string(value)])
+    @discardableResult
+    public static func questionState(_ q: PendingQuestion, _ value: String) -> Bool {
+        return emit(kind: "question_state", payload: ["question_id": .string(q.id), "state": .string(value)])
     }
     public static func syncPreferences() {
         let p = WorkflowPreferences.current
@@ -95,29 +96,33 @@ public enum ResearchWorkflow {
                 "end": .string(formatter.string(from: q.detectedAt))]
     }
     /// Specialized annotations are separate from model labels and generic narrative answers.
-    public static func annotate(_ q: PendingQuestion, value: String) {
+    @discardableResult
+    public static func annotate(_ q: PendingQuestion, value: String) -> Bool {
+        var saved = true
+        let id = "answer-annotation-" + q.id
         if q.kind == .placeCheck || q.kind == .taskCheck {
-            guard let body = contextAnswer(q, value: value) else { return }
-            emit(kind: "context_label", payload: body, id: "context-answer-" + q.id)
+            guard let body = contextAnswer(q, value: value) else { return false }
+            saved = emit(kind: "context_label", payload: body, id: "context-answer-" + q.id)
         } else if q.kind == .weatherMood || q.kind == .morningMood {
             var body: [String: ResearchValue] = ["weather": .string(value)]
             if q.context.externalTrigger == "server-v2" { body["question_id"] = .string(q.id) }
-            emit(kind: "weather_mood", payload: body)
+            saved = emit(kind: "weather_mood", payload: body, id: id)
         } else if q.kind == .typingReason {
-            emit(kind: "typing_reason", payload: ["question_id": .string(q.id), "reason": .string(value)])
+            saved = emit(kind: "typing_reason", payload: ["question_id": .string(q.id), "reason": .string(value)], id: id)
         } else if q.kind == .supportOutcome {
             let parts = value.split(separator: ":").map(String.init)
-            if parts.count == 3, let related = q.relatedID {
-                let executed = parts[2] != "not_executed"
-                emit(kind: "intervention_outcome", payload: ["question_id": .string(related),
-                    "action": .string(parts[1]), "executed": .bool(executed),
-                    "helpfulness": .string(executed ? parts[2] : "unknown")])
-            }
+            guard parts.count == 3, let related = q.relatedID else { return false }
+            let executed = parts[2] != "not_executed"
+            saved = emit(kind: "intervention_outcome", payload: ["question_id": .string(related),
+                "action": .string(parts[1]), "executed": .bool(executed),
+                "helpfulness": .string(executed ? parts[2] : "unknown")], id: id)
         }
+        guard saved else { return false }
         if value == "stop" {
+            guard questionState(q, "stop") else { return false }
             var p = WorkflowPreferences.current; p.interventionsEnabled = false; WorkflowPreferences.current = p
-            questionState(q, "stop")
-        } else if value == "declined" { questionState(q, "declined") }
+        } else if value == "declined" { return questionState(q, "declined") }
+        return true
     }
 }
 
@@ -137,7 +142,7 @@ public enum ResearchPresentation {
         let p = WorkflowPreferences.current
         guard NarrativeState().narrativeEnabled, q.expiresAt.map({ $0 > now }) ?? true else { return false }
         guard q.kind != .breakCheck || p.interventionsEnabled else { return false }
-        let today = displays.filter { Calendar.current.isDate($0.at, inSameDayAs: now) }
+        let today = displays.filter { ResearchClock.calendar.isDate($0.at, inSameDayAs: now) }
         guard !today.contains(where: { $0.id == q.id }), today.count < p.dailyLimit else { return false }
         if q.kind == .breakCheck && today.filter({ $0.intervention }).count >= p.interventionLimit { return false }
         return today.last.map { now.timeIntervalSince($0.at) >= Double(p.gapMinutes) * 60 } ?? true

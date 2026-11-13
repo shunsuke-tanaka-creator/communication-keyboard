@@ -66,7 +66,7 @@
 	</array>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
-		<string>com.tanaka05.MozcFlickKeyboard.research-refresh</string>
+		<string>$(PRODUCT_BUNDLE_PREFIX).research-refresh</string>
 	</array>
 </dict>
 </plist>

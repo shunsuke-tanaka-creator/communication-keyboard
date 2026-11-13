@@ -319,6 +319,7 @@ public struct PMTTContext: Codable {
 }
 
 /// NarrativeEvent と PMTT ノードの対応付け1件（PMTT 側から参照する用）。
+@available(*, deprecated, message: "Use NarrativeEvent.pmtt; no in-repository consumer")
 public struct PMTTLink: Codable {
     /// 対応する NarrativeEvent の event_id。
     public let eventID: String
@@ -373,6 +374,7 @@ public struct NarrativeAnalysis: Codable {
 // MARK: - 介入
 
 /// 介入（提案）1件の記録。
+@available(*, deprecated, message: "Use ResearchEventEnvelope and intervention_outcome")
 public struct InterventionEvent: Codable {
     /// 一意 ID。
     public let id: String

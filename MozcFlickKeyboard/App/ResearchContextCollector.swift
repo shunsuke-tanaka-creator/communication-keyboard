@@ -66,37 +66,53 @@ final class ResearchContextCollector {
         [stepType, distanceType, flightsType, energyType, speedType, stepLengthType, asymmetryType]
     }
 
-    private func refreshHealth() {
+    private func refreshHealth(completion: @escaping () -> Void = {}) {
         healthStore.requestAuthorization(toShare: [], read: readTypes) { [weak self] ok, error in
             NSLog("[MFK-Research] HealthKit auth ok=\(ok) error=\(String(describing: error))") // 追加: デバッグ
-            guard let self = self else { return }
-            let todayStart = Calendar.current.startOfDay(for: Date())
+            guard let self, ok, error == nil else { completion(); return }
+            let group = DispatchGroup()
+            let todayStart = ResearchClock.calendar.startOfDay(for: Date())
             let lastHourStart = Date().addingTimeInterval(-3600) // 追加: 直近1時間（平均系の集計窓）
 
             // 合計系（今日0時〜現在）
+            group.enter()
             self.fetchStat(type: self.stepType, unit: .count(), options: .cumulativeSum, start: todayStart) { v in
+                defer { group.leave() }
                 self.contextStore.update { c in c.stepCount = v; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["step_count": Date()]) { _, new in new } }
             }
+            group.enter()
             self.fetchStat(type: self.distanceType, unit: .meter(), options: .cumulativeSum, start: todayStart) { v in
+                defer { group.leave() }
                 self.contextStore.update { c in c.walkingDistanceM = v; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["walking_distance_m": Date()]) { _, new in new } }
             }
+            group.enter()
             self.fetchStat(type: self.flightsType, unit: .count(), options: .cumulativeSum, start: todayStart) { v in
+                defer { group.leave() }
                 self.contextStore.update { c in c.flightsClimbed = v; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["flights_climbed": Date()]) { _, new in new } }
             }
+            group.enter()
             self.fetchStat(type: self.energyType, unit: .kilocalorie(), options: .cumulativeSum, start: todayStart) { v in
+                defer { group.leave() }
                 self.contextStore.update { c in c.activeEnergyKcal = v; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["active_energy_kcal": Date()]) { _, new in new } }
             }
 
             // 平均系（直近1時間）
+            group.enter()
             self.fetchStat(type: self.speedType, unit: HKUnit.meter().unitDivided(by: .second()), options: .discreteAverage, start: lastHourStart) { v in
+                defer { group.leave() }
                 self.contextStore.update { c in c.walkingSpeedMps = v; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["walking_speed_mps": Date()]) { _, new in new } }
             }
+            group.enter()
             self.fetchStat(type: self.stepLengthType, unit: .meter(), options: .discreteAverage, start: lastHourStart) { v in
+                defer { group.leave() }
                 self.contextStore.update { c in c.walkingStepLengthM = v; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["walking_step_length_m": Date()]) { _, new in new } }
             }
+            group.enter()
             self.fetchStat(type: self.asymmetryType, unit: .percent(), options: .discreteAverage, start: lastHourStart) { v in
+                defer { group.leave() }
                 self.contextStore.update { c in c.walkingAsymmetryPct = v.map { $0 * 100 }; c.measurementUpdatedAt = (c.measurementUpdatedAt ?? [:]).merging(["walking_asymmetry_pct": Date()]) { _, new in new } } // 追加: 0〜1 → %
             }
+            group.notify(queue: .main, execute: completion)
         }
     }
 
@@ -109,7 +125,6 @@ final class ResearchContextCollector {
                                       options: options) { _, stats, error in
             let quantity = options.contains(.discreteAverage) ? stats?.averageQuantity() : stats?.sumQuantity()
             let value = quantity?.doubleValue(for: unit)
-            NSLog("[MFK-Research] HealthKit \(type.identifier)=\(value ?? -1) error=\(String(describing: error))") // 追加: デバッグ
             DispatchQueue.main.async { completion(value) }
         }
         healthStore.execute(query)
@@ -123,8 +138,8 @@ final class ResearchContextCollector {
         for type in readTypes {
             let observer = HKObserverQuery(sampleType: type, predicate: nil) { [weak self] _, completionHandler, error in
                 NSLog("[MFK-Research] HealthKit observer fired \(type.identifier) error=\(String(describing: error))") // 追加: デバッグ
-                self?.refreshHealth()
-                completionHandler()
+                guard let self, error == nil else { completionHandler(); return }
+                self.refreshHealth(completion: completionHandler)
             }
             healthStore.execute(observer)
             healthStore.enableBackgroundDelivery(for: type, frequency: .hourly) { ok, error in
@@ -149,8 +164,8 @@ final class ResearchContextCollector {
     }
 
     private func fetchTodayEvents() {
-        let start = Calendar.current.startOfDay(for: Date())
-        let end = Calendar.current.date(byAdding: .day, value: 1, to: start)!
+        let start = ResearchClock.calendar.startOfDay(for: Date())
+        let end = ResearchClock.calendar.date(byAdding: .day, value: 1, to: start)!
         let predicate = eventStore.predicateForEvents(withStart: start, end: end, calendars: nil)
         let events = eventStore.events(matching: predicate).map {
             ResearchCalendarEvent(title: $0.title ?? "", start: $0.startDate, end: $0.endDate)

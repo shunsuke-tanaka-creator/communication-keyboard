@@ -2,12 +2,12 @@
 # =============================================================================
 # build_mozc_ios.sh
 # 目的  : Mozc を iOS (arm64) 向けに Bazel(bazelisk) でクロスビルドし、
-#         静的ライブラリ / XCFramework を out/ に生成する。
-# 期待出力: out/mozc/ 以下にビルド成果物（.a もしくは .xcframework）。
+#         静的ライブラリ を out/ に生成する。
+# 期待出力: out/mozc/ 以下にビルド成果物（libmozc_ios.a、mozc.data、include、build-manifest.txt）。
 # 失敗時 : どの前提が欠けているか・どのビルドステップで失敗したかを明示する。
 # 注意  : Mozc の iOS ビルドは非常に重く、環境依存で失敗しやすい。
 #         本スクリプトは「正しいコマンド列」と「前提チェック」を重視する
-#         ベストエフォート実装。長時間ビルドはメイン側で別途実行する想定。
+#         実機ビルドは Mac/Xcode 上で実行・検証する。
 # =============================================================================
 set -euo pipefail
 
@@ -17,6 +17,14 @@ MOZC_DIR="${PROJECT_ROOT}/third_party/mozc"
 # Mozc のリポジトリはビルド定義が src/ 配下にあることが多い。
 MOZC_SRC_DIR="${MOZC_DIR}/src"
 OUT_DIR="${PROJECT_ROOT}/out/mozc"
+export USE_BAZEL_VERSION="$(tr -d '[:space:]' < "${PROJECT_ROOT}/.bazelversion")"
+EXPECTED_REVISION="$(tr -d '[:space:]' < "${SCRIPT_DIR}/mozc-revision.txt")"
+if [ "$(git -C "${MOZC_DIR}" rev-parse HEAD)" != "${EXPECTED_REVISION}" ]; then
+  echo "ERROR: run scripts/bootstrap.sh with the pinned Mozc revision first" >&2; exit 1
+fi
+if ! git -C "${MOZC_DIR}" apply --reverse --check "${SCRIPT_DIR}/patches/mozc-ios-archive.patch"; then
+  echo "ERROR: required versioned Mozc patch is missing" >&2; exit 1
+fi
 
 # iOS ビルド設定
 IOS_ARCH="${IOS_ARCH:-arm64}"
@@ -48,7 +56,12 @@ if [ ! -e "${BUILD_ROOT}/WORKSPACE" ] && [ ! -e "${BUILD_ROOT}/WORKSPACE.bazel" 
 fi
 echo "==> Bazel build root: ${BUILD_ROOT}"
 
-mkdir -p "${OUT_DIR}"
+# Build into a fresh staging directory. A failed build never promotes stale outputs.
+FINAL_OUT_DIR="${OUT_DIR}"
+mkdir -p "${PROJECT_ROOT}/out"
+OUT_DIR="$(mktemp -d "${PROJECT_ROOT}/out/mozc-stage.XXXXXX")"
+STAGING_OUT_DIR="${OUT_DIR}"
+trap 'rm -rf "${STAGING_OUT_DIR}"' EXIT
 
 # --- Bazel ビルド -----------------------------------------------------------
 # iOS 向けクロスコンパイル用の Mozc 集約ターゲット。
@@ -56,7 +69,7 @@ mkdir -p "${OUT_DIR}"
 # 1 本の静的ライブラリ(*_lipo.a)にまとめる apple_static_library（third_party/mozc/src/ios/BUILD.bazel に追加済み）。
 MOZC_BAZEL_TARGET="${MOZC_BAZEL_TARGET:-//ios:mozc_ios_combined}"
 
-# iOS 向けビルドフラグ（検証済み 2026-07-14, tag 2.32.5994.102 / Bazel 8.4.1）。
+# iOS 向けビルドフラグ（固定設定: tag 2.32.5994.102 / Bazel 8.4.1。実機ビルドは別途検証）。
 # 注意: --config=oss_macos は TARGET=oss_macos を強制し mac 専用コード(Cocoa)を引くため使えない。
 #       macos_env(コンパイラ設定のみ) + TARGET=ios が正解。apple_static_library はアーキを --ios_multi_cpus で受ける。
 BAZEL_FLAGS=(
@@ -86,18 +99,6 @@ if [ ${BUILD_RC} -ne 0 ]; then
   exit ${BUILD_RC}
 fi
 
-# 追加: OSS 辞書データ(mozc.data)をホスト側でビルドする。
-# 辞書はデータコンパイラ(ホスト実行)の成果物なので iOS 向けフラグ不要。--config=oss_macos で生成する。
-# IosEngine(data_file_path) にこのファイルパスを渡して初期化する。
-echo "==> OSS 辞書データ //data_manager/oss:mozc.data をビルドします。"
-set +e
-( cd "${BUILD_ROOT}" && bazelisk build --config=oss_macos //data_manager/oss:mozc.data )
-DATA_RC=$?
-set -e
-if [ ${DATA_RC} -ne 0 ]; then
-  echo "WARN: 辞書データのビルドに失敗しました (rc=${DATA_RC})。" >&2
-fi
-
 # --- 成果物の収集 -----------------------------------------------------------
 # apple_static_library は <name>_lipo.a を出力する。これを 1 本の Mozc iOS ライブラリとして収集する。
 BAZEL_BIN="${BUILD_ROOT}/bazel-bin"
@@ -110,9 +111,9 @@ if [ -e "${COMBINED_LIB}" ]; then
   # 推移的に include するため、それらを 1 本のヘッダ検索パス out/mozc/include にまとめて収集する。
   INC_DIR="${OUT_DIR}/include"
   mkdir -p "${INC_DIR}/ios" "${INC_DIR}/protocol"
-  cp -f "${MOZC_SRC_DIR}/ios/ios_engine.h" "${INC_DIR}/ios/" 2>/dev/null || true
+  cp -f "${MOZC_SRC_DIR}/ios/ios_engine.h" "${INC_DIR}/ios/"
   # 生成 protobuf ヘッダ(*.pb.h)は bazel-bin/protocol にある。
-  cp -f "${BAZEL_BIN}/protocol/"*.pb.h "${INC_DIR}/protocol/" 2>/dev/null || true
+  cp -f "${BAZEL_BIN}/protocol/"*.pb.h "${INC_DIR}/protocol/"
   # absl / protobuf のヘッダ(.h/.inc)を外部リポジトリからツリーごと収集（ヘッダのみ）。
   ABSL_SRC="${BUILD_ROOT}/bazel-src/external/abseil-cpp+"
   PROTO_SRC="${BUILD_ROOT}/bazel-src/external/protobuf+/src"
@@ -124,7 +125,21 @@ if [ -e "${COMBINED_LIB}" ]; then
   fi
   echo "==> 収集完了: ${OUT_DIR}/libmozc_ios.a ($(ls -lh "${OUT_DIR}/libmozc_ios.a" | awk '{print $5}')) / headers $(du -sh "${INC_DIR}" | awk '{print $1}')"
 else
-  echo "WARN: 集約ライブラリが見つかりません: ${COMBINED_LIB}" >&2
+  echo "ERROR: 集約ライブラリが見つかりません: ${COMBINED_LIB}" >&2
+  exit 1
+fi
+
+# 追加: OSS 辞書データ(mozc.data)をホスト側でビルドする。
+# 辞書はデータコンパイラ(ホスト実行)の成果物なので iOS 向けフラグ不要。--config=oss_macos で生成する。
+# IosEngine(data_file_path) にこのファイルパスを渡して初期化する。
+echo "==> OSS 辞書データ //data_manager/oss:mozc.data をビルドします。"
+set +e
+( cd "${BUILD_ROOT}" && bazelisk build --config=oss_macos //data_manager/oss:mozc.data )
+DATA_RC=$?
+set -e
+if [ ${DATA_RC} -ne 0 ]; then
+  echo "ERROR: 辞書データのビルドに失敗しました (rc=${DATA_RC})。" >&2
+  exit "${DATA_RC}"
 fi
 
 # 追加: 辞書データ(mozc.data)を収集。アプリ(Extension)バンドルに同梱して IosEngine に渡す。
@@ -133,9 +148,25 @@ if [ -e "${MOZC_DATA}" ]; then
   cp -Lf "${MOZC_DATA}" "${OUT_DIR}/mozc.data"
   echo "==> 辞書データ収集完了: ${OUT_DIR}/mozc.data ($(ls -lh "${OUT_DIR}/mozc.data" | awk '{print $5}'))"
 else
-  echo "WARN: 辞書データが見つかりません: ${MOZC_DATA}" >&2
+  echo "ERROR: 辞書データが見つかりません: ${MOZC_DATA}" >&2
+  exit 1
 fi
 
-echo "==> build_mozc_ios 完了。成果物: ${OUT_DIR}"
-echo "    ここで生成した .a / .xcframework を Xcode プロジェクトにリンクし、"
+for artifact in libmozc_ios.a mozc.data include/ios/ios_engine.h include/protocol/commands.pb.h include/absl/base/config.h include/google/protobuf/message.h; do
+  if [ ! -s "${OUT_DIR}/${artifact}" ]; then
+    echo "ERROR: required artifact missing or empty: ${artifact}" >&2; exit 1
+  fi
+done
+lipo -verify_arch arm64 "${OUT_DIR}/libmozc_ios.a"
+printf '%s\n' "mozc=${EXPECTED_REVISION}" "bazel=${USE_BAZEL_VERSION}" "ios_min=${IOS_MIN_VERSION}" > "${OUT_DIR}/build-manifest.txt"
+shasum -a 256 "${OUT_DIR}/libmozc_ios.a" "${OUT_DIR}/mozc.data" >> "${OUT_DIR}/build-manifest.txt"
+if [ -e "${FINAL_OUT_DIR}" ]; then
+  BACKUP_DIR="$(mktemp -d "${PROJECT_ROOT}/out/mozc-previous.XXXXXX")"
+  rmdir "${BACKUP_DIR}"
+  mv "${FINAL_OUT_DIR}" "${BACKUP_DIR}"
+  echo "==> Previous build retained: ${BACKUP_DIR}"
+fi
+mv "${OUT_DIR}" "${FINAL_OUT_DIR}"
+echo "==> build_mozc_ios 完了。成果物: ${FINAL_OUT_DIR}"
+echo "    project.yml は実機 SDK で libmozc_ios.a と mozc.data を参照します。"
 echo "    MOZC_AVAILABLE を定義すると MozcEngineBridge が実 API 経路を使います。"

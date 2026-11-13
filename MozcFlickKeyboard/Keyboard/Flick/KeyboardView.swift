@@ -308,7 +308,6 @@ final class KeyboardView: UIView {
 
     /// エンジンからの ConversionResult を受けて候補バー/一覧を再描画する。
     func update(with result: ConversionResult) {
-        NSLog("[MFK] KeyboardView.update composition='\(result.composition)' candidates=\(result.candidates.count) converting=\(result.isConverting)") // 追加: 表示更新のデバッグ
         let readingChanged = displayedResult.composition != result.composition
         displayedResult = result
         let focused = result.isConverting && result.segments.indices.contains(result.focusedSegment)
@@ -616,7 +615,6 @@ final class KeyboardView: UIView {
         if inputMode == .katakana {
             kana = KanaTransform.toKatakana(kana)
         }
-        NSLog("[MFK] emitKana id='\(kanaKeyID)' dir=\(direction) -> kana='\(kana)'") // 追加: かな解決結果のデバッグ
         actionDelegate?.keyboardDidPressKey(keyID: kanaKeyID, direction: "\(direction)") // 追加: 生キー操作を通知（ログ用）
         actionDelegate?.keyboardDidInputKey(keyID: kanaKeyID, direction: direction)
     }

@@ -1,5 +1,7 @@
 # Mozc 初期調査レポート (MozcFlickKeyboard)
 
+> 過去の調査・実機記録です。現在の固定SHA・patch・ビルド手順と未検証範囲は [README](../README.md) を参照してください。過去の成功記録は今回のcleanビルド検証を意味しません。
+
 対象: iPhone専用12キー日本語フリックキーボード「MozcFlickKeyboard」の変換エンジンとして Mozc を採用するための調査。
 調査日: 2026-07-13
 担当: Mozc 調査・安定リビジョン選定・ライセンス確認

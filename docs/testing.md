@@ -40,15 +40,17 @@ MozcFlickKeyboard のテストは「単体」「UI」「実機」の 3 層です
 xcodebuild test \
   -project MozcFlickKeyboard.xcodeproj \
   -scheme MozcFlickKeyboard \
-  -destination 'platform=iOS Simulator,name=iPhone 15'
+  -destination 'platform=iOS Simulator,name=iPhone 16'
 ```
+
+期待：`** TEST SUCCEEDED **`。意図しない出力：`Unable to find a destination` / `** TEST FAILED **`。端末名はインストール済みSimulatorに合わせます。
 
 フラグは定義済みのため、追加指定なしで実行できます。CLI で明示する例:
 ```bash
 xcodebuild test \
   -project MozcFlickKeyboard.xcodeproj \
   -scheme MozcFlickKeyboard \
-  -destination 'platform=iOS Simulator,name=iPhone 15' \
+  -destination 'platform=iOS Simulator,name=iPhone 16' \
   OTHER_SWIFT_FLAGS='-D LOCAL_STUB_AVAILABLE -D USER_DICT_AVAILABLE'
 ```
 
@@ -78,7 +80,7 @@ UI テストは XCUITest で、キーボード表示 → キー押下 → ホス
 
 ## 6. 性能テスト
 
-- `UserDictionaryTests` の `measure` ブロックで 100 / 1000 / 10000 件の登録・検索を計測。
+- `UserDictionaryTests` は100件の登録と1000/10000件からの検索を計測。検索の準備は既存のJSON一括インポートで行い、計測外の全辞書書込みを繰り返しません。件数と検索結果を検証し、一時ディレクトリを終了時に削除します。
 - 変換系の初期化・候補生成時間は [performance.md](performance.md) の目標値に対して計測。
 - XCTest のパフォーマンスベースラインを記録し、回帰を検出する。
 
@@ -96,3 +98,11 @@ UI テストは XCUITest で、キーボード表示 → キー押下 → ホス
 - `ConversionCaseTests` を変換の回帰スイートとして維持。新たな不具合を見つけたら「よみ→期待」を1行追加する運用。
 - Mozc やスタブ辞書を更新した際は本スイートを必ず実行。
 - CI では Simulator でユニット/回帰テストを実行し、実機依存（署名・キーボード追加）は手動チェックリストで補完。
+
+## 2026-11-11の監査回帰テスト
+
+`ResearchPersistenceTests` に10件追加：保存失敗、同一IDの再試行、並行JSONL追記、隔離/復帰、GPS隔離の非復帰、新しいqueue内容の保護、HTTP再試行分類、JST境界、質問バナーと回答入力の区別。
+
+2026-11-12にGitHub ActionsのmacOS 15 / Xcode 16.4 / XcodeGen 2.46.0でSimulatorビルドと保存関連10テストの成功を確認しました。全体の最新結果は[Validate iOS](https://github.com/shunsuke-tanaka-creator/communication-keyboard/actions/workflows/validate.yml)を参照してください。`project.yml` はController実経路もテストtargetでコンパイルします。READMEのSimulatorコマンドでビルド/テスト後、実機でフルアクセス・プライベートモード、通常入力、保存容量不足、通信断→再送、旧GPS停止を確認してください。
+
+CIはmain向けPRと `workflow_dispatch` で起動します。macOS 15 runnerでXcode/XcodeGenの版を記録し、インストール済みのiPhone Simulatorを自動選択します。Mozc実機成果物と署名は不要です。結果は `ios-test-results` artifactへ保存します。手動起動時はSimulatorのdestinationを指定できます。

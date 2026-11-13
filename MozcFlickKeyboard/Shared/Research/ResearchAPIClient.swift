@@ -33,23 +33,27 @@ public final class ResearchAPIClient {
     }
 
     /// 追加: セッションをキューへ積んでから送信を試みる（失敗してもキューに残る）。
-    public func upload(_ payload: ResearchSessionUpload) {
-        queue.enqueue(payload)
+    @discardableResult
+    public func upload(_ payload: ResearchSessionUpload) -> Bool {
+        guard queue.enqueue(payload) else { return false }
         flushPendingSessions()
+        return true
     }
 
-    /// 追加: キューの未送信セッションを古い順に送る。1件失敗したらそこで止める。
+    /// 追加: キューの未送信セッションを古い順に送る。一時エラーで停止、恒久エラーは原本を隔離して後続へ進む。
     public func flushPendingSessions(completion: @escaping (Bool) -> Void = { _ in }) {
         guard let url = endpoint("api/sessions") else { completion(false); return }
-        let pending = queue.loadAll()
+        let pending = queue.pendingFiles
         sendSequentially(pending, index: 0, url: url, completion: completion)
     }
 
-    private func sendSequentially(_ payloads: [ResearchSessionUpload], index: Int, url: URL, completion: @escaping (Bool) -> Void) {
-        guard index < payloads.count else { completion(true); return }
-        let payload = payloads[index]
-        guard let body = try? NarrativeJSON.encoder.encode(payload) else {
-            completion(false)
+    private func sendSequentially(_ files: [URL], index: Int, url: URL, completion: @escaping (Bool) -> Void) {
+        guard index < files.count else { completion(true); return }
+        let file = files[index]
+        guard let body = try? Data(contentsOf: file),
+              (try? NarrativeJSON.decoder.decode(ResearchSessionUpload.self, from: body)) != nil else {
+            guard ResearchPersistence.quarantine(file, reason: "decode") else { completion(false); return }
+            sendSequentially(files, index: index + 1, url: url, completion: completion)
             return
         }
         var request = URLRequest(url: url)
@@ -58,11 +62,14 @@ public final class ResearchAPIClient {
         request.httpBody = body
         session.dataTask(with: request) { [self] _, response, error in
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-            let success = error == nil && (200..<300).contains(code)
-            NSLog("[MFK-Research] session upload id=\(payload.sessionID) status=\(code) ok=\(success)") // 追加: デバッグ
-            guard success else { completion(false); return }
-            self.queue.remove(sessionID: payload.sessionID)
-            self.sendSequentially(payloads, index: index + 1, url: url, completion: completion)
+            guard error == nil else { completion(false); return }
+            if ResearchPersistence.isPermanentHTTPFailure(code) {
+                guard ResearchPersistence.quarantine(file, reason: String(code), expected: body) else { completion(false); return }
+            } else {
+                guard (200..<300).contains(code) else { completion(false); return }
+                if (try? Data(contentsOf: file)) == body { try? FileManager.default.removeItem(at: file) }
+            }
+            sendSequentially(files, index: index + 1, url: url, completion: completion)
         }.resume()
     }
 
@@ -144,49 +151,5 @@ public final class ResearchAPIClient {
             NSLog("[MFK-Research] sensor event type=\(event.type) status=\(code) ok=\(success)") // 追加: デバッグ
             DispatchQueue.main.async { completion?(success) }
         }.resume()
-    }
-}
-
-/// 追加: 未送信セッションを App Group の1セッション1ファイルで保持する再送キュー。
-public final class ResearchSessionQueue {
-    public static var directoryURL: URL? {
-        AppConfig.sharedContainerURL?.appendingPathComponent("Library/Application Support/PendingResearchSessions", isDirectory: true)
-    }
-
-    public init() {
-        // Preserve queues written by previous app versions; pending uploads must not live in Caches.
-        guard let old = AppConfig.sharedContainerURL?.appendingPathComponent("Library/Caches/PendingResearchSessions"),
-              let directory = Self.directoryURL,
-              let files = try? FileManager.default.contentsOfDirectory(at: old, includingPropertiesForKeys: nil) else { return }
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        for file in files where file.pathExtension == "json" {
-            try? FileManager.default.moveItem(at: file, to: directory.appendingPathComponent(file.lastPathComponent))
-        }
-    }
-
-    public func enqueue(_ payload: ResearchSessionUpload) {
-        guard let directory = Self.directoryURL,
-              let data = try? NarrativeJSON.encoder.encode(payload) else { return }
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appendingPathComponent(payload.sessionID).appendingPathExtension("json")
-        try? data.write(to: url, options: .atomic)
-    }
-
-    public func loadAll() -> [ResearchSessionUpload] {
-        guard let directory = Self.directoryURL,
-              let urls = try? FileManager.default.contentsOfDirectory(at: directory,
-                                                                       includingPropertiesForKeys: [.contentModificationDateKey],
-                                                                       options: [.skipsHiddenFiles]) else { return [] }
-        // 変更: ファイル名(UUID)順ではなく開始時刻の古い順に送る。
-        return urls.compactMap { url -> ResearchSessionUpload? in
-            guard let data = try? Data(contentsOf: url) else { return nil }
-            return try? NarrativeJSON.decoder.decode(ResearchSessionUpload.self, from: data)
-        }.sorted { $0.startedAt < $1.startedAt }
-    }
-
-    public func remove(sessionID: String) {
-        guard let directory = Self.directoryURL else { return }
-        let url = directory.appendingPathComponent(sessionID).appendingPathExtension("json")
-        try? FileManager.default.removeItem(at: url)
     }
 }
