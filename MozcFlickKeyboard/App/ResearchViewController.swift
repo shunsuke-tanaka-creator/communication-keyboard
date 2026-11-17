@@ -5,7 +5,7 @@ import MozcFlickShared
 /// Native opt-ins and answers; detailed timelines/topologies are served by the research dashboard.
 final class ResearchViewController: UITableViewController {
     private let state = NarrativeState()
-    private var status = "行動の流れから拠点とタスクを別々に学習します。候補は確認・命名・訂正できます。"
+    private var status = "拠点と行動パターン（タスク）を区別して確認します。候補の名前は本人が付けられます。推定方式と利用可能な機能はサーバー側の設定に従います。"
     private var candidate: ProposalCandidate?
     init() { super.init(style: .insetGrouped) }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -20,10 +20,10 @@ final class ResearchViewController: UITableViewController {
     }
     override func numberOfSections(in tableView: UITableView) -> Int { 3 }
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { [4,5,2][section] }
-    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? { ["お天気分を記録", "収集と質問の設定", "状態・傾向・自動マップ"][section] }
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? { ["お天気分を記録", "収集と質問の設定", "状態・傾向・行動パターン"][section] }
     override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
         if section == 0 { return "天気は気分の4分類です。疲労の点数とは別に記録します。" }
-        if section == 1 { return "GPSは使用しません。拠点・タスクの確認も1日の質問上限に含みます。通知と背景の実行時刻はiOSにより制限されます。" }
+        if section == 1 { return "GPSは使用しません。拠点・行動パターンの確認も1日の質問上限に含みます。通知と背景の実行時刻はiOSにより制限されます。" }
         return status
     }
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
