@@ -173,3 +173,11 @@ Mozc は C++ で書かれているため、Swift から直接呼べません。�
 - 変換・学習・辞書、App/Extension/Sharedのtarget境界は維持。未使用MockRecommendationEngineは削除。
 
 モデル学習・評価・受信時刻のcutoffはPython側で管理します。GPSは使用しません。実機での時刻・送信・保存・競合確認は [testing.md](testing.md) の対象です。
+
+## 研究用文章特徴のサーバー処理
+
+確定文章の特徴化は `switch_bot_python` 側で行う。主条件は凍結したローカルSentenceTransformer `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`（revision `e8f8c211226b894fcb81acc59f3b34ba3efd5f42`）。384次元を固定射影で32次元に変換する。iOS側でこの重みを搭載する必要はない。
+
+既存の `commit` イベントの `data.text` と、候補置換時の `data.replaces` を用いる。サーバーは5分窓内の置換を反映し、前後contextや自己報告の自由文を文章特徴には混ぜない。送信先はこれまでどおり設定した研究サーバーであり、原文をHugging Faceなどへ送信しない。公開モデル重みの取得はサーバーの事前セットアップ時だけ行う。
+
+モデルの配置・設定・再学習は [サーバーの導入手順](https://github.com/shunsuke-tanaka-creator/switch_bot_python/blob/main/docs/sentence-encoder.md) を参照。送信スキーマ、同意、プライベートモードの挙動は既存実装を維持する。
