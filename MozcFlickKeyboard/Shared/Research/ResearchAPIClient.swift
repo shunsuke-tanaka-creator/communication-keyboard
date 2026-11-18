@@ -5,6 +5,7 @@
 // - flushPendingSessions()   … キューに残った未送信セッションを再送（キーボード表示時・親アプリ同期時に呼ぶ）
 // - fetchPendingQuestion(...) … GET /api/questions/pending/{participant_id}（サーバーの最新質問1件）
 // - sendSensorEvent(_:)       … POST /api/sensor-events（1回だけ送る。失敗しても再送キューには積まない）
+// - sendObservation(...)     … 追加: POST /api/heartbeats（動作時の観測状態を1回だけ送る）
 // baseURL が空なら何もしない（isConfigured = false）。
 
 import Foundation
@@ -30,6 +31,25 @@ public final class ResearchAPIClient {
         let root = baseURL.hasSuffix("/") ? baseURL : baseURL + "/"
         guard let url = URL(string: root + path), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else { return nil }
         return url
+    }
+
+    /// 追加: このプロセスが把握する観測状態だけを送る。終日の記録や到達は保証しない。
+    public func sendObservation(participantID: String, source: String, loggingEnabled: Bool?, questionsEnabled: Bool) {
+        guard let url = endpoint("api/heartbeats") else { return }
+        var body: [String: Any] = [
+            "event_id": UUID().uuidString,
+            "participant_id": participantID,
+            "occurred_at": ISO8601DateFormatter().string(from: Date()),
+            "source": source,
+            "questions_enabled": questionsEnabled
+        ]
+        if let loggingEnabled { body["logging_enabled"] = loggingEnabled }
+        guard let data = try? JSONSerialization.data(withJSONObject: body) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        session.dataTask(with: request) { _, _, _ in }.resume()
     }
 
     /// 追加: セッションをキューへ積んでから送信を試みる（失敗してもキューに残る）。
