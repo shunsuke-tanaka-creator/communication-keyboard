@@ -25,6 +25,10 @@ final class ResearchContextCollector {
 
     /// 追加: 全 Context を取り直す。各取得は非同期で、取れた順に main で保存する。
     func refresh() {
+        let state = NarrativeState()
+        ResearchAPIClient(baseURL: state.backendBaseURL).sendObservation(
+            participantID: state.participantID, source: "parent_app", loggingEnabled: nil,
+            questionsEnabled: state.narrativeEnabled)
         NSLog("[MFK-Research] context refresh start") // 追加: デバッグ
         refreshBattery()
         refreshHealth()
@@ -46,7 +50,8 @@ final class ResearchContextCollector {
         contextStore.update { context in
             context.batteryLevel = level >= 0 ? level : nil
             context.batteryState = state
-            context.measurementUpdatedAt = (context.measurementUpdatedAt ?? [:]).merging(["battery_level": Date()]) { _, new in new }
+            let now = Date() // 追加: 同時に取得した電池残量と状態に同じ取得時刻を付ける。
+            context.measurementUpdatedAt = (context.measurementUpdatedAt ?? [:]).merging(["battery_level": now, "battery_state": now]) { _, new in new }
         }
     }
 

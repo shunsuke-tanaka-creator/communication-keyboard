@@ -92,6 +92,12 @@ public struct ResearchDeviceContext: Codable {
 
     public init() {}
 
+    /// 追加: 指定項目を取得した時刻を記録する。既存の他項目の時刻は保持する。
+    public mutating func markMeasurement(_ key: String) {
+        if measurementUpdatedAt == nil { measurementUpdatedAt = [:] }
+        measurementUpdatedAt?[key] = Date()
+    }
+
     public enum CodingKeys: String, CodingKey {
         case stepCount = "step_count"
         case walkingDistanceM = "walking_distance_m"

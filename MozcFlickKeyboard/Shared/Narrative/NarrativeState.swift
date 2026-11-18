@@ -1,10 +1,10 @@
 // NarrativeState.swift
 // MozcFlickKeyboard — 追加: 出題制御に必要な状態を App Group UserDefaults に保持する。
 //
-// 保持するもの: 日別の回答済みフラグ / 種別ごとの最終表示時刻 / snooze 期限と回数 /
+// 保持するもの: 日別の回答済みフラグ / 回答済み質問IDと直前の質問ID / 種別ごとの最終表示時刻 / snooze 期限と回数 /
 // 当日初回キーボード利用時刻 / 手動イベントのキュー / 打鍵ベースライン / 研究設定。
 // テストから差し替えられるよう init(defaults:) で UserDefaults を注入できる。
-// 実装は「日付キー yyyyMMdd の辞書」だけで済ませ、極力単純に保つ。
+// 日別フラグは日付キー yyyyMMdd の辞書、質問IDの履歴は文字列配列で保持する。
 
 import Foundation
 
@@ -12,6 +12,10 @@ import Foundation
 public enum NarrativeSettingsKeys {
     /// 日別の回答済み: [yyyyMMdd: [kind rawValue: 回答時刻(epoch秒)]]
     public static let answered = "narrative.answered"
+    /// 追加: 回答済み質問ID（直近200件、古い順）。
+    public static let answeredRequests = "research.answeredRequests"
+    /// 追加: 最後に表示した実質問のID。
+    public static let lastRequestID = "research.lastRequestID"
     /// 種別ごとの最終表示時刻: [kind rawValue: epoch秒]
     public static let lastShown = "narrative.lastShown"
     /// 種別ごとの snooze 期限: [kind rawValue: epoch秒]
@@ -67,6 +71,28 @@ public final class NarrativeState {
 
     /// 指定日の日付キー。
     private func dayKey(_ date: Date) -> String { dayFormatter.string(from: date) }
+
+    // MARK: - 追加: 質問IDによる再出題制御
+
+    /// 追加: 最後に表示した実質問のID（未表示なら nil）。
+    public var lastRequestID: String? {
+        get { defaults?.string(forKey: NarrativeSettingsKeys.lastRequestID) }
+        set { defaults?.set(newValue, forKey: NarrativeSettingsKeys.lastRequestID) }
+    }
+
+    /// 追加: 回答を端末に保存済みの質問か。サーバーへの送信待ちでも再出題しない。
+    public func hasAnsweredRequest(_ id: String) -> Bool {
+        (defaults?.stringArray(forKey: NarrativeSettingsKeys.answeredRequests) ?? []).contains(id)
+    }
+
+    /// 追加: 重複を除いて末尾に追加し、回答済みIDを直近200件に保つ。
+    public func markAnsweredRequest(_ id: String) {
+        guard let defaults else { return }
+        var ids = defaults.stringArray(forKey: NarrativeSettingsKeys.answeredRequests) ?? []
+        ids.removeAll { $0 == id }
+        ids.append(id)
+        defaults.set(Array(ids.suffix(200)), forKey: NarrativeSettingsKeys.answeredRequests)
+    }
 
     // MARK: - 回答済み管理
 
@@ -328,6 +354,8 @@ public final class NarrativeState {
     public func resetForTesting() {
         guard let defaults else { return }
         for key in [NarrativeSettingsKeys.answered,
+                    NarrativeSettingsKeys.answeredRequests,
+                    NarrativeSettingsKeys.lastRequestID,
                     NarrativeSettingsKeys.lastShown,
                     NarrativeSettingsKeys.snoozeUntil,
                     NarrativeSettingsKeys.snoozeCount,

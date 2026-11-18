@@ -536,6 +536,7 @@ final class KeyboardViewController: UIInputViewController {
     /// 変更: 出題判定。サーバー（v0.1）の最新質問を優先し、URL未設定時のみローカル Trigger を利用する。
     ///       安否確認が出ている間・機能OFF・既に質問表示中・Full Access 無しは何もしない（同時1問）。
     private func evaluateNarrativeTriggers() {
+        if hasFullAccess { clientObservation() }
         guard narrativeState.narrativeEnabled else { return } // 追加: 機能OFFなら早期リターン
         guard hasFullAccess else { return } // 追加: 研究機能は Full Access 必須
         guard pendingCheck == nil else { return } // 追加: 安否確認が出ている間は Narrative 質問を出さない
@@ -554,14 +555,37 @@ final class KeyboardViewController: UIInputViewController {
             guard let self else { return }
             guard self.currentPending == nil, !self.researchInputMode else { return } // 追加: 待っている間に表示された場合は出さない
             if let candidate {
+                let now = Date()
                 // 追加: プレビューはサーバー評価済みなので実質問用の端末内ゲートを再適用しない。
-                if candidate.isPreview || ResearchPresentation.canShow(candidate.question) {
-                    self.presentQuestion(candidate, now: Date())
+                if candidate.isPreview || self.canShowServerQuestion(candidate.question, now: now) {
+                    self.presentQuestion(candidate, now: now)
                 }
             } else {
                 // A configured server owns the shared budget. No competing fallback questions.
             }
         }
+    }
+
+    /// 追加: サーバー実質問にも、回答済みID・種別snooze・現在状態の3時間抑止を適用する。
+    private func canShowServerQuestion(_ question: PendingQuestion, now: Date) -> Bool {
+        guard !narrativeState.hasAnsweredRequest(question.id) else { return false }
+        if let until = narrativeState.snoozeUntil(kind: question.kind), now < until { return false }
+        let isLastCurrentState = question.kind == .currentState && narrativeState.lastRequestID == question.id
+        if question.kind == .currentState, !isLastCurrentState,
+           let last = narrativeState.lastShown(kind: .currentState),
+           now.timeIntervalSince(last) < QuestionCatalog.template(for: .currentState).cooldown {
+            return false
+        }
+        // 変更: 直前の未回答currentStateは前回表示の続きとして扱い、表示予算を再消費しない。
+        return ResearchPresentation.canShow(question, now: now, allowingRedisplay: isLastCurrentState)
+    }
+
+    /// 追加: Full Access時に、プライベートモードと質問設定を観測報告する。
+    private func clientObservation() {
+        let isPrivate = sharedDefaults?.bool(forKey: SettingsKeys.privateModeEnabled) ?? false
+        ResearchAPIClient(baseURL: narrativeState.backendBaseURL).sendObservation(
+            participantID: narrativeState.participantID, source: "keyboard",
+            loggingEnabled: hasFullAccess && !isPrivate, questionsEnabled: narrativeState.narrativeEnabled)
     }
 
     /// 追加: ローカル Trigger による出題（Backend 未設定・未接続時も既存のお天気分質問を動かす）。
@@ -587,6 +611,7 @@ final class KeyboardViewController: UIInputViewController {
         if p.expiresAt == nil { p.expiresAt = now.addingTimeInterval(3600) }
         p.questionShownAt = now // 追加: 表示時刻
         if !candidate.isPreview {
+            narrativeState.lastRequestID = p.id
             ResearchPresentation.record(p, now: now)
             if p.context.externalTrigger == "server-v2" { ResearchWorkflow.questionState(p, "shown") }
             narrativeState.markShown(kind: p.kind, at: now) // 追加: cooldown 起点を記録
@@ -715,6 +740,7 @@ final class KeyboardViewController: UIInputViewController {
             showResearchSaveFailure()
             return
         }
+        narrativeState.markAnsweredRequest(pending.id)
         narrativeState.markAnswered(kind: pending.kind, on: now) // 追加: 当日回答済み・1日上限に反映
         narrativeState.updateTypingBaseline(with: typing) // 追加: 打鍵ベースライン更新
 
