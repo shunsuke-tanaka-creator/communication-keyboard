@@ -64,7 +64,7 @@ final class ResearchViewController: UITableViewController {
             status = saved ? "\(mood.label)を保存しました。通信できるときに同期します。" : "保存できませんでした。もう一度お試しください。"
             tableView.reloadData()
         } else if indexPath.section == 1 {
-            if indexPath.row == 3 { choose(title: "1日の質問上限", values: [2,3,4,6,8]) { n in var p = WorkflowPreferences.current; p.dailyLimit = n; p.interventionLimit = min(2,n); WorkflowPreferences.current = p } }
+            if indexPath.row == 3 { choose(title: "1日の質問上限", values: [2,3,4,6,8,10,12]) { n in var p = WorkflowPreferences.current; p.dailyLimit = n; p.interventionLimit = min(2,n); WorkflowPreferences.current = p } }
             if indexPath.row == 4 { choose(title: "質問の間隔（分）", values: [30,60,90,120]) { n in var p = WorkflowPreferences.current; p.gapMinutes = n; WorkflowPreferences.current = p } }
         } else if indexPath.row == 0 { fetchQuestion() }
         else { navigationController?.pushViewController(ResearchWebViewController(), animated: true) }
@@ -94,6 +94,7 @@ final class ResearchViewController: UITableViewController {
     }
     private func show(_ candidate: ProposalCandidate) {
         guard presentedViewController == nil, state.narrativeEnabled else { return }
+        if !candidate.isPreview && candidate.question.isAdaptiveSupport && !WorkflowPreferences.current.interventionsEnabled { return }
         var q = candidate.question; q.questionShownAt = Date()
         self.candidate = ProposalCandidate(question: q, isPreview: candidate.isPreview)
         if !candidate.isPreview {
@@ -101,7 +102,7 @@ final class ResearchViewController: UITableViewController {
             ResearchWorkflow.questionState(q, "shown")
         }
         if q.kind == .currentState || q.kind == .nightReflection {
-            let form = ResearchAssessmentViewController(daily: q.kind == .nightReflection) { [weak self] values in
+            let form = ResearchAssessmentViewController(daily: q.kind == .nightReflection, assessmentTitle: q.adaptiveAssessmentTitle) { [weak self] values in
                 guard let self = self else { return false }
                 if let values = values {
                     let data = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys])
@@ -186,20 +187,24 @@ final class ResearchWebViewController: UIViewController, WKNavigationDelegate {
 /// One scrollable form avoids stacking UIAlertControllers between scale answers.
 final class ResearchAssessmentViewController: UITableViewController {
     private let daily: Bool
+    private let assessmentTitle: String?
     private let done: ([String: Int]?) -> Bool
     private var values: [String: Int] = [:]
-    init(daily: Bool, done: @escaping ([String: Int]?) -> Bool) {
-        self.daily = daily; self.done = done; super.init(style: .insetGrouped)
+    init(daily: Bool, assessmentTitle: String? = nil, done: @escaping ([String: Int]?) -> Bool) {
+        self.daily = daily; self.assessmentTitle = assessmentTitle; self.done = done; super.init(style: .insetGrouped)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func viewDidLoad() {
-        super.viewDidLoad(); title = daily ? "今日全体の状態" : "今の状態"
+        super.viewDidLoad(); title = assessmentTitle ?? (daily ? "今日全体の状態" : "今の状態")
         navigationItem.leftBarButtonItem = UIBarButtonItem(title: "あとで", style: .plain, target: self, action: #selector(cancel))
         navigationItem.rightBarButtonItem = UIBarButtonItem(title: "保存", style: .done, target: self, action: #selector(save))
         tableView.rowHeight = UITableView.automaticDimension
     }
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int { StateAssessment.keys.count }
-    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? { "選ばなかった項目は未回答として保存します。" }
+    override func tableView(_ tableView: UITableView, titleForFooterInSection section: Int) -> String? {
+        if assessmentTitle == "休憩前の状態" { return "未回答の項目は欠測として保存します。全5項目が揃った場合にのみ休憩提案へ進みます。" }
+        return "選ばなかった項目は未回答として保存します。"
+    }
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
         let label = UILabel(); label.numberOfLines = 0; label.font = .preferredFont(forTextStyle: .body)
