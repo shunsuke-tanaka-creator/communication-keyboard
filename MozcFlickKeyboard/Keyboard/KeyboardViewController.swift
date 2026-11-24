@@ -571,7 +571,7 @@ final class KeyboardViewController: UIInputViewController {
         guard !narrativeState.hasAnsweredRequest(question.id) else { return false }
         if let until = narrativeState.snoozeUntil(kind: question.kind), now < until { return false }
         let isLastCurrentState = question.kind == .currentState && narrativeState.lastRequestID == question.id
-        if question.kind == .currentState, !isLastCurrentState,
+        if question.kind == .currentState, !question.isAdaptiveSupport, !isLastCurrentState,
            let last = narrativeState.lastShown(kind: .currentState),
            now.timeIntervalSince(last) < QuestionCatalog.template(for: .currentState).cooldown {
             return false
@@ -614,7 +614,7 @@ final class KeyboardViewController: UIInputViewController {
             narrativeState.lastRequestID = p.id
             ResearchPresentation.record(p, now: now)
             if p.context.externalTrigger == "server-v2" { ResearchWorkflow.questionState(p, "shown") }
-            narrativeState.markShown(kind: p.kind, at: now) // 追加: cooldown 起点を記録
+            if p.adaptiveAssessmentTitle == nil { narrativeState.markShown(kind: p.kind, at: now) }
         }
         currentCandidate = ProposalCandidate(question: p, isPreview: candidate.isPreview)
         keyboardView.showQuestion(p, isPreview: candidate.isPreview) // 追加: プレビュー表示を明示
@@ -697,7 +697,7 @@ final class KeyboardViewController: UIInputViewController {
     private func showCurrentDailyScale() {
         guard dailyScaleIndex < StateAssessment.keys.count else { return }
         keyboardView.showQuestionOptions(
-            prompt: StateAssessment.prompt(index: dailyScaleIndex, daily: currentPending?.kind == .nightReflection),
+            prompt: (currentPending?.adaptiveAssessmentTitle.map { $0 + "：" } ?? "") + StateAssessment.prompt(index: dailyScaleIndex, daily: currentPending?.kind == .nightReflection),
             options: StateAssessment.options(index: dailyScaleIndex), allowFreeText: false)
     }
 

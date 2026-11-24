@@ -37,6 +37,33 @@ final class ResearchWorkflowTests: XCTestCase {
         }
     }
 
+    func testAdaptiveSupportReusesExistingQuestionKinds() throws {
+        let now = Date()
+        let context = ContextSnapshot(timeOfDay: "afternoon", typingActive: false,
+                                      calendarBusy: false, externalTrigger: "server-v2")
+        let cases: [(QuestionKind, String, String?, Bool)] = [
+            (.currentState, "support_pre:bucket", "休憩前の状態", false),
+            (.breakCheck, "support_discovery:pre", nil, true),
+            (.supportOutcome, "support_outcome:break", nil, true),
+            (.currentState, "support_post:break", "休憩後の状態", true),
+            (.currentState, "routine_currentState", nil, false),
+            (.supportOutcome, "outcome:legacy", nil, false)
+        ]
+        for (kind, event, title, followup) in cases {
+            let q = PendingQuestion(participantID: "p001", kind: kind, prompt: "test",
+                                    options: [], allowFreeText: false, eventType: event,
+                                    detectedAt: now, context: context)
+            let decoded = try NarrativeJSON.decoder.decode(PendingQuestion.self, from: NarrativeJSON.encoder.encode(q))
+            XCTAssertEqual(decoded.isAdaptiveSupport, event.hasPrefix("support_"))
+            XCTAssertEqual(decoded.isAdaptiveSupportFollowup, followup)
+            XCTAssertEqual(decoded.adaptiveAssessmentTitle, title)
+            let answer = NarrativeEvent.make(from: decoded, answer: QuestionAnswer(label: "current_state"),
+                                             typing: nil, answeredAt: now)
+            XCTAssertEqual(answer.eventType, event)
+            XCTAssertEqual(answer.question.kind, kind)
+        }
+    }
+
     func testWeatherIsNominalAndStateScalesRemainIndependent() {
         XCTAssertEqual(WeatherMood.allCases.count, 4)
         XCTAssertEqual(StateAssessment.keys.count, 5)

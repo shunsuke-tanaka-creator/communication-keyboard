@@ -126,6 +126,22 @@ public enum ResearchWorkflow {
     }
 }
 
+public extension PendingQuestion {
+    var isAdaptiveSupport: Bool {
+        guard context.externalTrigger == "server-v2" else { return false }
+        return (kind == .currentState && (eventType.hasPrefix("support_pre:") || eventType.hasPrefix("support_post:")))
+            || (kind == .breakCheck && eventType.hasPrefix("support_discovery:"))
+            || (kind == .supportOutcome && eventType.hasPrefix("support_outcome:"))
+    }
+    var isAdaptiveSupportFollowup: Bool {
+        isAdaptiveSupport && !eventType.hasPrefix("support_pre:")
+    }
+    var adaptiveAssessmentTitle: String? {
+        guard isAdaptiveSupport, kind == .currentState else { return nil }
+        return eventType.hasPrefix("support_pre:") ? "休憩前の状態" : "休憩後の状態"
+    }
+}
+
 public enum ResearchPresentation {
     private struct Display: Codable { let id: String; let at: Date; let intervention: Bool }
     private static var displays: [Display] {
@@ -145,11 +161,12 @@ public enum ResearchPresentation {
     public static func canShow(_ q: PendingQuestion, now: Date, allowingRedisplay: Bool) -> Bool {
         let p = WorkflowPreferences.current
         guard NarrativeState().narrativeEnabled, q.expiresAt.map({ $0 > now }) ?? true else { return false }
-        guard q.kind != .breakCheck || p.interventionsEnabled else { return false }
+        guard (q.kind != .breakCheck && !q.isAdaptiveSupport) || p.interventionsEnabled else { return false }
         let today = displays.filter { ResearchClock.calendar.isDate($0.at, inSameDayAs: now) }
         if allowingRedisplay, q.kind == .currentState, today.contains(where: { $0.id == q.id }) { return true }
         guard !today.contains(where: { $0.id == q.id }), today.count < p.dailyLimit else { return false }
         if q.kind == .breakCheck && today.filter({ $0.intervention }).count >= p.interventionLimit { return false }
+        if q.isAdaptiveSupportFollowup { return true }
         return today.last.map { now.timeIntervalSince($0.at) >= Double(p.gapMinutes) * 60 } ?? true
     }
     public static func record(_ q: PendingQuestion, now: Date = Date()) {

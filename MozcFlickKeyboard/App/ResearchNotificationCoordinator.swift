@@ -56,7 +56,7 @@ final class ResearchNotificationCoordinator: NSObject, UNUserNotificationCenterD
                 if !enabled { return true }
                 guard let data = request.content.userInfo["question"] as? Data,
                       let q = try? NarrativeJSON.decoder.decode(PendingQuestion.self, from: data) else { return true }
-                return (q.kind == .breakCheck && !interventions) || (q.expiresAt.map { $0 <= Date() } ?? false)
+                return ((q.kind == .breakCheck || q.isAdaptiveSupport) && !interventions) || (q.expiresAt.map { $0 <= Date() } ?? false)
             }.map(\.identifier)
             center.removePendingNotificationRequests(withIdentifiers: ids)
         }
@@ -99,7 +99,7 @@ final class ResearchNotificationCoordinator: NSObject, UNUserNotificationCenterD
         if let data = notification.request.content.userInfo["question"] as? Data,
            let q = try? NarrativeJSON.decoder.decode(PendingQuestion.self, from: data),
            NarrativeState().narrativeEnabled,
-           q.kind != .breakCheck || WorkflowPreferences.current.interventionsEnabled,
+           (q.kind != .breakCheck && !q.isAdaptiveSupport) || WorkflowPreferences.current.interventionsEnabled,
            q.expiresAt.map({ $0 > Date() }) ?? true {
             ResearchWorkflow.questionState(q, "shown"); completionHandler([.banner, .list])
         } else { completionHandler([]) }
