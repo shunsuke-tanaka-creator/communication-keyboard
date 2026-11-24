@@ -64,7 +64,7 @@ Mozc は C++ で書かれているため、Swift から直接呼べません。�
 
 1. **Swift 層**: `MozcConversionEngine`（`JapaneseConversionEngine` 準拠）。入出力は純 Swift 値型（`ConversionResult` 等）。
 2. **ObjC++ 層（MozcBridge）**: `.mm` ファイル。Swift から見える Objective-C クラス（例: `MozcSessionBridge`）を公開し、内部で Mozc の C++ API（`mozc::Session` 等）を呼ぶ。Swift へは `NSString` / プリミティブ / 単純な struct のみ返す。
-3. **C++ 層（Mozc）**: `out/mozc` にビルド済みの静的ライブラリ / XCFramework。
+3. **C++ 層（Mozc）**: `out/mozc/libmozc_ios.a` をリンクし、同梱の `mozc.data` とヘッダを使用する。現行スクリプトは XCFramework を生成しない。
 
 境界での型変換方針:
 
@@ -106,7 +106,7 @@ Mozc は C++ で書かれているため、Swift から直接呼べません。�
 - **Converting → Composing**: `cancelConversion`（composition 保持）。
 - **→ Empty**: `commit`（確定文字列を返し内部リセット）または `reset`。
 
-拡張側 UI（`KeyboardViewController`）は `UITextDocumentProxy` に marked text API が無いため、未確定文字列（変換中は選択中の文節列）を `syncInline` で入力欄へ実際に挿入します。`pendingComposition` との差分だけを `deleteBackward` / `insertText` で更新し、確定時は挿入済みの分を消してから確定文字列を入れ直します。
+拡張側 UI（`KeyboardViewController`）は、未確定よみと変換中の文節列を `syncInline` から `UITextDocumentProxy.setMarkedText` で反映し、確定時に `unmarkText` を呼びます。選択範囲は UTF-16 で指定します。ホストごとの表示挙動は実機で確認します。
 
 ---
 
@@ -138,8 +138,8 @@ Mozc は C++ で書かれているため、Swift から直接呼べません。�
 ## 8. スレッドモデル
 
 - UI 操作・`UITextDocumentProxy` 反映は**メインスレッド**。
-- Mozc 変換呼び出しは短時間で完了する想定のため原則同期呼び出し。重い初期化（辞書ロード）は起動時のバックグラウンドで先読みし、初回入力までに完了を目指す。
-- ユーザー辞書の大量入出力（CSV/JSON 数千〜万件）はバックグラウンドキューで実行し、完了後にメインで反映。
+- Mozc の生成と変換呼び出しは現行 Controller から同期的に実行する。バックグラウンド先読みは未実装で、初期化・応答時間は別途測定する。
+- 辞書 CSV/JSON 入出力は Shared の同期 API として提供する。現行ホストアプリには操作画面とバックグラウンド実行経路はない。
 
 ---
 
@@ -158,7 +158,7 @@ Mozc は C++ で書かれているため、Swift から直接呼べません。�
   - 依存（protobuf / abseil 等）のバージョン整合を Bazel が管理し、再現性が高い。
   - CMake/GYP など旧経路より公式サポートが手厚い。
 - 具体的な取得元・固定リビジョン・確認済みビルドフラグは [initial-research.md](initial-research.md) を参照（調査担当が確定値を記載）。
-- 成果物（`.a` / `.xcframework`）は `out/mozc` に生成し、`scripts/generate_xcode_project.sh` が生成する Xcode プロジェクトへリンクします。
+- 成果物は `out/mozc` の `libmozc_ios.a`、`mozc.data`、ヘッダ、`build-manifest.txt` です。`scripts/generate_xcode_project.sh` が生成する Xcode プロジェクトへ静的ライブラリをリンクします。現行スクリプトは XCFramework を生成しません。
 
 ---
 

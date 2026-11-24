@@ -2,10 +2,12 @@
 // MozcFlickKeyboard — 追加: 疑似 IoT センサーイベントを解釈し、お天気分の質問キュー / 文脈ログへ振り分ける。
 //
 // 受信経路: 同一 LAN の MacBook から Python CLI → 親アプリの SensorHTTPServer → この Router。
-// 出力経路:
-//   - 玄関開 (door_open)  → NarrativeState.enqueueManualEvent(.outing)      → 次回キーボードで「どこへ行きましたか？」
-//   - 玄関閉 (door_close) → NarrativeState.enqueueManualEvent(.returnHome)  → 次回キーボードで「今回の外出はどうでしたか？」
-//   - 温度 high / low     → NarrativeState.enqueuePendingKind(.fatigueCheck) → 次回キーボードで「少し疲れていますか？」
+// 追加: 出力経路（ローカル質問キューへの投入）:
+// 追加: 玄関開 (door_open)  → NarrativeState.enqueueManualEvent(.outing)
+// 追加: 玄関閉 (door_close) → NarrativeState.enqueueManualEvent(.returnHome)
+// 追加: 温度 high / low     → NarrativeState.enqueuePendingKind(.fatigueCheck)
+// 追加: Backend URL未設定時はFull Access・質問設定・予算・間隔条件を満たすと表示する。
+// 追加: サーバー設定済みの場合はサーバーの発行判断に従う。
 //   - 温度 mid / トイレ / 在室(present|absent) → 質問は出さず ContextEvent として記録のみ
 // いずれの場合も「生の受信記録」として ContextEvent(eventType: "sensor_<type>", source: "sensor") を必ず保存する。
 //
@@ -86,13 +88,13 @@ public final class SensorEventRouter {
 
         switch event.type {
         case Self.typeDoorOpen:
-            // 追加: 玄関開 → 外出として扱い、次回キーボードで外出先を聞く。
+            // 追加: 玄関開 → 外出として扱い、外出先質問のローカルキューへ積む。
             manual = .outing
         case Self.typeDoorClose:
-            // 追加: 玄関閉 → 帰宅として扱い、次回キーボードで外出評価を聞く。
+            // 追加: 玄関閉 → 帰宅として扱い、外出評価質問のローカルキューへ積む。
             manual = .returnHome
         case Self.typeTemperature:
-            // 追加: 高温・低温は体調に影響するため疲労チェックを出す。中温(mid)は記録のみ。
+            // 追加: 高温・低温は疲労チェックのローカルキューへ積む。中温(mid)は記録のみ。
             if event.value == "high" || event.value == "low" {
                 pending = .fatigueCheck
             }
@@ -104,7 +106,7 @@ public final class SensorEventRouter {
             unknown = true
         }
 
-        // 追加: キュー投入（質問を出す指示）。
+        // 追加: ローカル質問キューへ投入。表示は冒頭の条件と出題判定に従う。
         if let manual { state.enqueueManualEvent(manual, at: at) }
         if let pending { state.enqueuePendingKind(pending, at: at) }
 

@@ -2,7 +2,7 @@
 
 
 
-この研究版（MacBook統合版）は、キーボードが記録した入力イベント（確定本文・前後文脈を含む）、お天気分の回答・文脈、端末Context（HealthKit・カレンダー・バッテリー）を Tailscale 経由で MacBook の研究サーバーへ同期します。Mac側では SwitchBot の開閉記録と合わせて SQLite に保存します。
+この研究版は、キーボードが記録した入力イベント（確定本文・前後文脈を含む）、お天気分の回答・文脈、端末Context（HealthKit・カレンダー・バッテリー）を利用者が設定した研究サーバーへ同期します。MacBook統合構成では、Mac側で SwitchBot の開閉記録と合わせて SQLite に保存します。
 
 - 接続先の既定値は空欄（`NarrativeState.recommendedBackendURL`）。設定画面の Backend URL を**空欄にして保存すると**送信・取得を停止します。保存済みのデータや送信待ちキューは端末に残ります。
 - 操作手順は [macbook-lifelog.md](macbook-lifelog.md) を参照してください。
@@ -12,10 +12,10 @@
 ## 1. 基本方針
 
 - かな漢字変換（Mozc / スタブ）、候補学習、ユーザー辞書は端末内だけで処理します。入力ログの保存・同期はこれとは別の経路です。
-- **Full Access が無効**のときは、入力と変換だけが動きます。入力ログ・学習・ユーザー辞書・お天気分・触覚フィードバック・ネットワーク通信はすべて無効です（`KeyboardViewController.applySettings` / `enableLoggingIfAllowed` / `evaluateNarrativeTriggers`）。
-- Full Access が有効で、かつプライベートモードが OFF のとき、`SessionLogger` が入力イベントを記録します。Backend URL が設定されていれば、セッション終了ごとに本文を含むセッションを Mac へ送信します。
-- お天気分の回答と文脈イベントは、端末内の JSONL に保存したうえで永続キュー（`ResearchEventOutbox`）からMacへ送信します。失敗した分は次の同期で再送します。Mac側ではイベントIDで重複を防ぎます。
-- 送信先は設定した研究サーバーだけです。広告・解析SDK・クラウドAIには送信しません。通信は平文 HTTP です（`NSAllowsArbitraryLoads = true`）。Tailscale の経路暗号化を前提にしています。
+- **キーボード拡張では、Full Access が無効**のときは、入力と変換だけが動きます。研究収集・辞書個人化・質問表示・触覚フィードバック・ネットワーク通信を無効にします（`KeyboardViewController.applySettings` / `enableLoggingIfAllowed` / `evaluateNarrativeTriggers`）。親アプリの明示的な記録・通信はこの設定に依存しません。
+- Full Access が有効で、かつプライベートモードが OFF のとき、`SessionLogger` が入力イベントを記録します。Backend URL が設定されていれば、セッション終了ごとに本文を含むセッションを設定した研究サーバーへ送信します。
+- お天気分の回答と文脈イベントは、端末内の JSONL に保存したうえで永続キュー（`ResearchEventOutbox`）から設定した研究サーバーへ送信します。失敗した分は次の同期で再送します。対応する研究サーバー側ではイベントIDで重複を防ぎます。
+- 送信先は利用者が設定した研究サーバーだけです。広告・解析SDK・クラウドAIには送信しません。HTTPとHTTPSを利用でき、HTTPも許可します（`NSAllowsArbitraryLoads = true`）。HTTP運用ではTailscale等の経路暗号化を運用上の前提としますが、アプリはその利用を強制・検証しません。
 - `PrivacyInfo.xcprivacy` は本ドキュメントの内容に合わせてあります。研究版では `project.yml` のホストアプリのリソースとして同梱します。GPS位置情報を取得する機能はありません。
 
 ---
@@ -77,7 +77,7 @@
 
 | 質問（`QuestionKind`） | 出る条件 | 保存値 |
 | --- | --- | --- |
-| `morningMood` | 当日初回のキーボード利用 かつ 6〜10時台 | good / normal / slightly_tired / bad |
+| `morningMood` | Backend URL未設定時のローカルTriggerで、当日初回のキーボード利用 かつ 6〜10時台 | `happy / normal / sad / angry` |
 | `nightReflection` | 22時〜翌2時台、または手動「寝る」 | `label=daily_reflection`、`free_text` に気分・疲労・ストレス・集中度・眠気を各1〜5で記録した JSON |
 | `outingDestination` | 手動「外出した」/ 疑似センサー `door_open` | work / shopping / walk / meal / hospital / other |
 | `outingEvaluation` | 手動「帰宅した」/ 疑似センサー `door_close` | good / normal / tired / difficult |
@@ -86,9 +86,9 @@
 | その他の種類（`morningGoal` / `workState` / `breakCheck` / `freeNarrative` / `interventionFeedback`） | ローカルの Trigger には接続していません。サーバーが返した場合だけ出ます | 各選択肢の value。自由記述を許可する質問では自由記述も |
 | 親アプリ「活動を記録」 | 手動 | `event_type=activity_report`、**自由記述（最大500文字）** |
 
-回答と一緒に保存する項目: きっかけの発生時刻・表示時刻・回答時刻、「あとで」回数、`ContextSnapshot`（時間帯・入力中か・外部トリガー）、ルールベースの感情・経験タイプ、PMTT ノード（Mock）、打鍵特徴。
+回答には質問、検知・表示・回答時刻、「あとで」回数、`ContextSnapshot`（時間帯・入力中か・外部トリガー）を保存します。キーボード回答には打鍵特徴、ルールベースの感情・経験タイプ、Mock PMTT IDを付加します。親アプリ回答ではこれらが欠測となる場合があります。
 
-プライベートモードは入力ログと学習だけを止めます。お天気分の出題・回答保存・送信はプライベートモード中も動きます（停止するには設定の「質問機能」を OFF にします）。
+プライベートモードは入力ログと学習だけを止めます。お天気分の出題・回答保存・送信はプライベートモード中も動きます。「質問機能」OFFは自動出題を停止しますが、親アプリの手動記録や既存queueの送信は停止しません。通信停止にはBackend URLを空欄にします。
 
 ### 2.5 文脈イベント（`ContextEvent`）
 

@@ -6,12 +6,10 @@
 
 ## 1. marked text（未確定文字列）相当の制約
 
-- 拡張が使える `UITextDocumentProxy` には、システム IME が持つ **marked text（下線付きの未確定文字列）API が無い**。
-- そのため変換中の「未確定のかな／変換候補」をホストのテキスト欄に下線表示することはできない。
-- **本プロジェクトの妥協点**:
-  - 変更: 未確定よみ（変換中は選択中の文節列）は `KeyboardViewController.syncInline` で入力欄へ**実際に挿入**する（擬似インライン表示）。変わるたびに `pendingComposition` との差分だけを `deleteBackward()` / `insertText` で更新する。下線は付かない。
-  - 確定（`commit`）時は、挿入済みの未確定分を消してから確定文字列を `insertText` する。未確定が空のときの削除は `deleteBackward()`。
-  - 変換候補は**キーボード領域内**（候補バー／候補一覧）に表示する。
+- 未確定よみと変換中の文節列は `KeyboardViewController.syncInline` から `UITextDocumentProxy.setMarkedText` で反映し、確定時に `unmarkText` を呼ぶ。
+- 選択範囲は UTF-16 で指定する。
+- ホストごとの表示挙動は実機で確認する。
+- 変換候補は**キーボード領域内**（候補バー／候補一覧）に表示する。
 
 ---
 
@@ -26,9 +24,9 @@
 ## 3. 電話番号 / URL / 数字入力欄（keyboardType）
 
 - `keyboardType` が `.numberPad` / `.phonePad` / `.URL` / `.emailAddress` などの場合、ホストは特定の文字種を期待する。
-- カスタムキーボードは keyboardType の情報を `textDocumentProxy` から参照できるが、レイアウトを自動で切り替えてはくれない。
-- **妥協点**（変更: 現状の実装）:
-  - `textDidChange` はフックだけで、`keyboardType` に応じたレイアウト切り替えは**実装していない**。数字・電話・URL・メール欄でも同じ12キーかなレイアウトが出る。
+- カスタムキーボードは keyboardType の情報を `textDocumentProxy` から参照できるが、OS がレイアウトを自動で切り替えることはない。
+- **現状の実装**:
+  - 入力欄変更時、`.URL` / `.emailAddress` / `.asciiCapable` / `.twitter` / `.webSearch` では英字、`.numberPad` / `.decimalPad` / `.phonePad` / `.asciiCapableNumberPad` では数字モードへ切り替える。
   - `keyboardType` / `returnKeyType` の値はセッション開始時の `meta` イベントとして入力ログに記録している。
 
 ---
@@ -59,7 +57,7 @@
 
 ## 6. ネットワーク
 
-- 変更: Full Access 有効時、キーボード拡張は研究サーバー（Backend URL、既定 `http://100.106.185.3:8000`）と次の通信をする:
+- Backend URL の既定値は空欄。Full Access 有効時、キーボード拡張は利用者が明示した研究サーバーと次の通信をする:
   - `POST /api/sessions`
   - `POST /api/narrative-events`
   - `POST /api/context-events`

@@ -61,8 +61,8 @@ xcodebuild test \
 Custom Keyboard の制約（[ios-keyboard-limitations.md](ios-keyboard-limitations.md)）を踏まえ、次の入力欄種別で手動/自動 UI テストを行います。
 
 - 通常テキスト欄（`UITextField` / `UITextView`）
-- `keyboardType = .numberPad` / `.phonePad`（変更: 専用レイアウトは未実装。同じかなレイアウトが出ることを確認）
-- `.URL` / `.emailAddress`
+- `keyboardType = .numberPad` / `.phonePad`（数字モードへの切替を確認）
+- `.URL` / `.emailAddress`（英字モードへの切替を確認）
 - `isSecureTextEntry`（標準キーボードへ切替されることを確認）
 
 UI テストは XCUITest で、キーボード表示 → キー押下 → ホスト欄の文字列アサートを基本形とします。

@@ -430,7 +430,7 @@ final class KeyboardViewController: UIInputViewController {
     /// App Group の設定を UI / 状態へ反映する。
     private func applySettings() {
         let d = sharedDefaults
-        // 既定値: トグル ON / フリックのみ OFF / 学習 ON。
+        // 追加: 既定値はトグルON、フリックのみON、学習ON。保存済み設定を優先する。
         let toggle = d?.object(forKey: SettingsKeys.toggleInputEnabled) as? Bool ?? true
         let flickOnly = d?.object(forKey: SettingsKeys.flickOnlyEnabled) as? Bool ?? true
         inputState.toggleInputEnabled = toggle
@@ -588,7 +588,7 @@ final class KeyboardViewController: UIInputViewController {
             loggingEnabled: hasFullAccess && !isPrivate, questionsEnabled: narrativeState.narrativeEnabled)
     }
 
-    /// 追加: ローカル Trigger による出題（Backend 未設定・未接続時も既存のお天気分質問を動かす）。
+    /// 追加: Backend URL未設定時に、ローカルTriggerによる出題を判定する。
     private func evaluateLocalNarrativeTriggers() {
         guard narrativeState.narrativeEnabled,
               pendingCheck == nil,

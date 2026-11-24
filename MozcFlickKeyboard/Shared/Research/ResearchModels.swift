@@ -1,5 +1,5 @@
 // ResearchModels.swift
-// MozcFlickKeyboard — 変更: 研究サーバー（MacBook / Tailscale、既定 http://YOUR_SERVER:8000）とやり取りするモデル一式。
+// 追加: 利用者が明示した研究サーバーとやり取りするモデル一式。Backend URLの既定値は空欄。
 //
 // - ResearchSessionUpload … POST /api/sessions の body（1分セッション単位の生ログ + 打鍵特徴 + 端末Context）
 // - ResearchDeviceContext … 親アプリが集めた端末Context（HealthKit / カレンダー / バッテリー / センサー最新値）

@@ -3,7 +3,7 @@
 ## 概要
 
 同一 LAN 上の MacBook から iPhone の**親アプリ**へ、疑似 IoT センサーイベントを HTTP POST で注入するための CLI です。
-親アプリが受信したイベントは物語生成（Narrative）機能のトリガーとして扱われ、キーボード側の質問表示や ContextEvent の記録に使われます。
+親アプリが受信したイベントは研究質問と回答記録（Narrative）機能の入力として扱い、ローカル質問キューや ContextEvent の記録に使います。
 
 - 送信先: `POST http://<iPhone の LAN IP>:8770/sensor`
 - 依存ライブラリ: **なし**（Python 3 標準ライブラリのみ。pip install 不要）
@@ -75,12 +75,14 @@ python3 tools/sensor_inject.py --host 192.168.1.23
 
 ## イベント一覧
 
+質問対象のイベントはローカル質問キューへ積みます。Backend URL 未設定時は Full Access・質問設定・予算・間隔条件を満たすとキーボードに表示します。サーバー設定済みの場合はサーバーの発行判断に従います。
+
 | サブコマンド | 送信される `type` | `value` | iOS 側の挙動 |
 | --- | --- | --- | --- |
-| `door_open` | `door_open` | なし | 外出イベントとして扱い、キーボードで「どこへ行きましたか？」の質問が出る |
-| `door_close` | `door_close` | なし | 帰宅イベントとして扱い、「今回の外出はどうでしたか？」の質問が出る |
-| `temp --value high` | `temperature` | `high` | 疲労チェック「少し疲れていますか？」の質問が出る |
-| `temp --value low` | `temperature` | `low` | 疲労チェック「少し疲れていますか？」の質問が出る |
+| `door_open` | `door_open` | なし | 外出イベントとしてローカルキューへ積む（上記条件で「どこへ行きましたか？」を表示） |
+| `door_close` | `door_close` | なし | 帰宅イベントとしてローカルキューへ積む（上記条件で「今回の外出はどうでしたか？」を表示） |
+| `temp --value high` | `temperature` | `high` | 疲労チェックをローカルキューへ積む（上記条件で「少し疲れていますか？」を表示） |
+| `temp --value low` | `temperature` | `low` | 疲労チェックをローカルキューへ積む（上記条件で「少し疲れていますか？」を表示） |
 | `temp --value mid` | `temperature` | `mid` | 記録のみ（質問は出ない） |
 | `toilet` | `toilet` | なし | 記録のみ（質問は出ない） |
 | `presence --value present\|absent` | `living_presence` | `present`（在室）または `absent`（不在） | 記録のみ（質問は出ない） |
@@ -94,7 +96,7 @@ python3 tools/sensor_inject.py --host 192.168.1.23
 - `type` … 必須。上表の値
 - `value` … 任意。`temperature`（`high` / `mid` / `low`）/ `living_presence`（`present` / `absent`）のときに指定
 - `at` … 任意。CLI は常に送信時刻（ミリ秒 + タイムゾーンオフセット）を付与します。省略時は iPhone 側の受信時刻が使われます（変更: `SensorEventRouter` の実装に合わせて表記修正）
-- 追加: iOS 側は、どの type でも `ContextEvent`（`sensor_<type>`）を端末の `Narrative/context_yyyyMMdd.jsonl` に保存します。さらに、Backend URL が設定されていれば研究サーバー（既定 `http://100.106.185.3:8000`）の `POST /api/sensor-events` へ1回送ります（再送なし）。
+- 追加: iOS 側は、どの type でも `ContextEvent`（`sensor_<type>`）を端末の `Narrative/context_yyyyMMdd.jsonl` に保存します。Backend URL の既定値は空欄です。利用者が明示した研究サーバーが設定されていれば、その `POST /api/sensor-events` へ1回送ります（再送なし）。
 
 ## 期待される出力例
 
@@ -111,7 +113,7 @@ CLI 側:
 [MFK-Sensor] received type=door_open
 ```
 
-キーボード側（Xcode コンソール、キーボードを開いたとき）:
+キーボード側（Xcode コンソール、Backend URL 未設定で Full Access・質問設定・予算・間隔条件を満たし、キーボードを開いて質問が表示された場合。サーバー設定済みの場合はサーバーの発行判断に従います）:
 
 ```
 [MFK-Narrative] question shown kind=outingDestination
@@ -130,10 +132,12 @@ CLI 側:
 
 ### `[OK] 200` だが質問が出ない
 
-- **1日の質問上限（5問）**に達している。翌日まで待つか、設定でリセットしてください。
+- Backend URL が設定済みの場合、ローカルキューは出題に使われません。サーバーの発行判断に従い、204 応答や通信失敗時もローカル質問へは切り替わりません。
+- キーボードの Full Access が OFF になっている。
+- **1日の質問上限（既定4件）**に達している。翌日まで待つか、「生活の気づき」の質問上限設定を確認してください。
 - 質問機能が OFF になっている（親アプリの 設定 を確認）。
 - その質問に**既に回答済み**、またはクールダウン中である。
-- キーボードは次回表示時または 60 秒間隔のチェックで質問を拾います。キーボードを開き直してみてください。
+- Backend URL 未設定時は、次回キーボード表示時または 60 秒間隔のチェックで、Full Access・質問設定・予算・間隔条件を満たすローカル質問を表示します。キーボードを開き直してみてください。
 
 ## 注意
 

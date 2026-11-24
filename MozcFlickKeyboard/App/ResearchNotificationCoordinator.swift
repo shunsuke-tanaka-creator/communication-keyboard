@@ -3,7 +3,7 @@ import UserNotifications
 import BackgroundTasks
 import MozcFlickShared
 
-/// Local notifications on foreground refresh, visit callbacks and best-effort BGAppRefresh.
+/// 追加: 前面更新とbest-effort BGAppRefreshの機会に、サーバー質問のローカル通知を登録する。
 /// iOS chooses background execution times; this is not a continuous polling daemon.
 final class ResearchNotificationCoordinator: NSObject, UNUserNotificationCenterDelegate {
     static let shared = ResearchNotificationCoordinator()

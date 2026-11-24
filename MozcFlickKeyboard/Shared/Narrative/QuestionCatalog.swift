@@ -144,11 +144,11 @@ public enum QuestionCatalog {
 public enum NarrativeConfig {
     /// 1日あたりの最大出題数。
     public static let maxQuestionsPerDay: Int = 4
-    /// 朝トリガーの有効時間帯（6:00〜10:59 の「時」）。
+    /// 追加: 朝トリガーの有効時間帯（端末時刻06:00〜10:59 の「時」）。
     public static let morningHours: ClosedRange<Int> = 6...10
     /// 変更: 夜トリガーの開始「時」（v0.1 仕様で 21:00 → 22:00 以降）。
     public static let nightStartHour: Int = 22
-    /// 夜トリガーの終了「時」（翌 02:00 まで）。
+    /// 追加: 夜トリガーの終了「時」（端末時刻の翌02:59まで）。
     public static let nightEndHour: Int = 2
     /// 「あとで」を押されたときの再表示までの間隔（30分）。
     public static let snoozeInterval: TimeInterval = 30 * 60
@@ -156,8 +156,8 @@ public enum NarrativeConfig {
     public static let fatigueCooldown: TimeInterval = 60 * 60
     /// 連続入力がこの時間を超えたら長時間セッションとみなす（30分）。
     public static let continuousTypingThreshold: TimeInterval = 30 * 60
-    /// 直近60分の累積入力時間がこの値を超えたら長時間セッションとみなす（45分）。
+    /// 追加: 未使用の将来検討用設定。現行Triggerは累積45分・窓60分の条件を参照しない。
     public static let recentCumulativeThreshold: TimeInterval = 45 * 60
-    /// 上記「直近」の対象窓（60分）。
+    /// 追加: 未使用の将来検討用の対象窓（60分）。現行Triggerは参照しない。
     public static let recentWindow: TimeInterval = 60 * 60
 }
