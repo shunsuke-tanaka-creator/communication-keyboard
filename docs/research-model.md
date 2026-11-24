@@ -11,7 +11,7 @@
 ## キーボードでの再出題制御
 
 - 実質問の回答保存が成功した後、質問IDを App Group UserDefaults の `research.answeredRequests` へ追加する。重複IDは末尾へ移し、直近200件を保持する。通信断で回答がoutboxに残っていても、保持中のIDは再出題しない。200件より古いIDの抑止はこの履歴だけでは保証しない。
-- 実質問を表示すると `research.lastRequestID` を更新する。サーバーの `currentState` が別IDなら、同種別の最終表示から3時間未満は表示しない。同じ直前IDの未回答なら再表示でき、当日の既存表示の続きとして表示予算を再消費しない。回答済みID・snooze・質問OFF・質問の有効期限は再表示にも適用する。
+- 実質問を表示すると `research.lastRequestID` を更新する。通常のサーバー `currentState` が別IDなら、同種別の最終表示から3時間未満は表示しない。介入前後のadaptive support質問はこの抑止の対象外で、サーバー支援条件と共通表示ゲートに従う。同じ直前IDの未回答なら再表示でき、当日の既存表示の続きとして表示予算を再消費しない。回答済みID・snooze・質問OFF・質問の有効期限は再表示にも適用する。
 - 「あとで」は種別別に30分のsnoozeを記録し、サーバー質問にも期限を適用する。別IDの同種別も期限内は抑止する。
 - ローカル `QuestionPolicy` は `currentState` を「当日回答済み」の抑止から除外する。3時間のcooldown・snooze・日次上限は維持する。テンプレートの `maxPerDay=2` は変更せず、この値を回数判定には使わない。サーバーの日次予算・生成方針も変更しない。
 - プレビューは既存どおり端末内の実質問ゲートを通さず、回答済みID・直前ID・最終表示時刻を変更しない。この移植はキーボードの実質問経路へ適用し、既存の親アプリ回答・通知フローは維持する。
@@ -45,7 +45,7 @@ iPhoneのBackend URLは既存のMac接続先を使用する。対応するMacサ
 Macでは次を確認する。
 
 1. `./scripts/generate_xcode_project.sh` でプロジェクトを再生成し、インストール済みiPhone Simulatorを指定して `xcodebuild test -project MozcFlickKeyboard.xcodeproj -scheme MozcFlickKeyboard -destination 'platform=iOS Simulator,name=iPhone 16' CODE_SIGNING_ALLOWED=NO` を実行する。
-2. 実機で現在状態と夜の5尺度、通信断での回答保存と再送、保存失敗時に回答済みIDを記録しないことを確認する。同じ直前未回答IDの再表示、別IDの3時間抑止、種別別30分snooze、200件の保持、プレビューの状態非更新も確認する。
+2. 実機で現在状態と夜の5尺度、通信断での回答保存と再送、保存失敗時に回答済みIDを記録しないことを確認する。同じ直前未回答IDの再表示、通常のcurrentState別IDの3時間抑止とadaptive support質問の例外、種別別30分snooze、200件の保持、プレビューの状態非更新も確認する。
 3. サーバー側で親アプリ/キーボードのheartbeatとJSON項目を確認する。質問OFF、Full Access無効、プライベートモード、接続断を切り替え、報告の保証範囲を確認する。
 4. 活動記録の安定値と表示ラベル、電池2項目の取得時刻、既存のHealthKit・予定の時刻保持を確認する。
 5. 「研究」のURLと同一ホスト/blobの遷移、外部ホストの拒否、JSONダウンロード・共有、接続断/保存失敗時のアラートを確認する。iPadで実行できる構成では共有シートのpopoverも確認する。サーバー画面の訂正・提案停止/再開・エクスポート内容は対応サーバーと組み合わせて確認する。

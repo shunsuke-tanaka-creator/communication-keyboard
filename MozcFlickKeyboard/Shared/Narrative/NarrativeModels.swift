@@ -11,7 +11,7 @@ import Foundation
 
 /// 質問の種別。JSON の question.kind としてそのまま保存される安定ラベル。
 public enum QuestionKind: String, Codable, CaseIterable {
-    /// 朝の気分（当日初回キーボード表示・06:00-10:00）
+    /// 追加: 朝の気分（当日初回キーボード表示・端末時刻06:00〜10:59）。
     case morningMood
     /// 今日の目標（朝、morningMood の後）
     case morningGoal
@@ -55,7 +55,7 @@ public struct QuestionTemplate: Codable {
     public let allowFreeText: Bool
     /// 同一種別を再出題できるまでの最短間隔（秒）。0 なら間隔制約なし。
     public let cooldown: TimeInterval
-    /// 1日あたりの最大出題回数。
+    /// 追加: maxPerDayはテンプレートの回数メタデータであり、現行QuestionPolicyはこの値を回数判定に使用しない。
     public let maxPerDay: Int
 
     public init(kind: QuestionKind,
@@ -295,7 +295,7 @@ public struct ContextEvent: Codable {
 
 // MARK: - PMTT 連携
 
-/// PMTT（行動遷移モデル）側のノード情報。NarrativeEvent に埋め込む。
+/// 追加: 互換保存用のPMTTContext。現行キーボードではMockのルールIDを保存し、学習済み遷移モデルの結果を表さない。
 public struct PMTTContext: Codable {
     /// ノード ID（例 weekday_afternoon_desk_work）。
     public let nodeID: String?
@@ -318,7 +318,7 @@ public struct PMTTContext: Codable {
     }
 }
 
-/// NarrativeEvent と PMTT ノードの対応付け1件（PMTT 側から参照する用）。
+/// 追加: NarrativeEvent と PMTT ノードの対応付け1件。互換維持用で、リポジトリ内利用箇所なし。
 @available(*, deprecated, message: "Use NarrativeEvent.pmtt; no in-repository consumer")
 public struct PMTTLink: Codable {
     /// 対応する NarrativeEvent の event_id。
@@ -534,7 +534,7 @@ public struct NarrativeEvent: Codable {
     }
 
     /// PendingQuestion + 回答から NarrativeEvent を組み立てる簡易ファクトリ。
-    /// source は "keyboard" 固定（親アプリから作る場合は init を直接使う）。
+    /// 追加: sourceの既定値はkeyboard。引数で変更でき、親アプリはparent_appを明示して同じファクトリを使う。
     /// summary は「選択肢ラベル + 自由記述」を連結した最小の要約にする。
     public static func make(from pending: PendingQuestion,
                            answer: QuestionAnswer,

@@ -112,7 +112,8 @@ public final class NarrativeState {
         defaults.set(all, forKey: NarrativeSettingsKeys.answered)
     }
 
-    /// 指定日の回答総数。maxQuestionsPerDay 判定に使う。
+    /// 追加: 指定日の回答済み種別数。同種別の複数回答は1件として数える。
+    /// 追加: maxQuestionsPerDay 判定に使う。実表示数の共通予算は別の ResearchPresentation が管理する。
     public func answeredCount(on date: Date) -> Int {
         let all = defaults?.dictionary(forKey: NarrativeSettingsKeys.answered) as? [String: [String: Double]]
         return all?[dayKey(date)]?.count ?? 0
@@ -198,7 +199,7 @@ public final class NarrativeState {
         defaults.set(queue, forKey: NarrativeSettingsKeys.manualEventQueue)
     }
 
-    /// キューを全部取り出して空にする（Trigger 評価時に消費する）。
+    /// 追加: キューを全部取り出して空にする。外出先・外出評価の回答保存成功後にControllerが呼ぶ。
     public func dequeueAllManualEvents() -> [(ManualEvent, Date)] {
         let items = peekManualEvents()
         defaults?.removeObject(forKey: NarrativeSettingsKeys.manualEventQueue)

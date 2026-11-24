@@ -2,7 +2,7 @@
 // MozcFlickKeyboard — 追加: 「今この質問を出してよいか」を NarrativeState を見て判定するゲート。
 //
 // TriggerEngine は Trigger が返した種別を canShow(kind:now:) に通し、通ったものだけ出題する。
-// 判定要素: 質問機能 ON/OFF / 当日回答済み / 種別 cooldown / 1日上限 / snooze。
+// 追加: 判定要素: 質問機能 ON/OFF / 当日回答済み / 種別 cooldown / 回答済み種別数の1日上限 / snooze。
 // Shared は framework ターゲット MozcFlickShared なので外部公開する型・メンバは全て public。
 
 import Foundation
@@ -11,7 +11,7 @@ import Foundation
 public final class QuestionPolicy {
     /// 追加: 判定に使う状態ストア。
     private let state: NarrativeState
-    /// 追加: 1日あたりの最大出題数（NarrativeConfig.maxQuestionsPerDay を注入）。
+    /// 追加: 1日あたりの回答済み種別数の上限（NarrativeConfig.maxQuestionsPerDay を注入）。
     private let maxQuestionsPerDay: Int
 
     /// 追加: 状態ストアと上限を注入する。上限の既定は NarrativeConfig の値。
@@ -21,7 +21,7 @@ public final class QuestionPolicy {
     }
 
     /// 追加: 手動イベント由来（外出先 / 外出評価）は外出のたびに新しい事象なので「当日1回」制約を免除する。
-    /// 追加: ただし maxPerDay と 1日上限は引き続き尊重する。
+    /// 追加: maxPerDayはテンプレートの回数メタデータであり、現行QuestionPolicyはこの値を回数判定に使用しない。
     private func isManualKind(_ kind: QuestionKind) -> Bool {
         kind == .outingDestination || kind == .outingEvaluation
     }
@@ -42,15 +42,14 @@ public final class QuestionPolicy {
 
         let template = QuestionCatalog.template(for: kind)
 
-        // 追加: 1日上限（回答数が上限に達していたら出さない）。
+        // 追加: 1日上限（回答済み種別数が上限に達していたら出さない。同種別の複数回答は1件）。
         guard state.answeredCount(on: now) < maxQuestionsPerDay else { return false }
 
         // 追加: snooze 期限内なら出さない。
         if let until = state.snoozeUntil(kind: kind), now < until { return false }
 
-        // 変更: 手動由来・センサー由来以外は「当日既に回答済みなら出さない」（morningMood 等 maxPerDay=1 の制約もこれで満たす）。
-        // 変更: currentState・手動由来（外出先/外出評価）・センサー由来（pendingKindQueue）は毎回新規事象なので免除し、
-        //       種別ごとの回数は cooldown と 1日上限 maxQuestionsPerDay で間接的に抑える。
+        // 追加: currentState・手動由来（外出先/外出評価）・センサー由来（pendingKindQueue）以外は、当日回答済みなら出さない。
+        // 追加: 種別 cooldown と回答済み種別数の1日上限を判定し、template.maxPerDay は参照しない。
         if kind != .currentState, !isManualKind(kind), !isSensorQueuedKind(kind), state.isAnswered(kind: kind, on: now) { return false }
 
         // 追加: 種別 cooldown（前回表示から template.cooldown 秒経っていなければ出さない）。
@@ -71,7 +70,7 @@ public final class QuestionPolicy {
         state.markShown(kind: kind, at: now)
     }
 
-    /// 追加: 回答済みにする（当日回答済み・1日上限のカウントに反映）。
+    /// 追加: 回答済みにする（当日回答済み・回答済み種別数の1日上限に反映）。
     public func recordAnswered(kind: QuestionKind, now: Date) {
         state.markAnswered(kind: kind, on: now)
     }
