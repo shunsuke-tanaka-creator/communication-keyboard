@@ -41,14 +41,15 @@ final class ResearchWorkflowTests: XCTestCase {
         let now = Date()
         let context = ContextSnapshot(timeOfDay: "afternoon", typingActive: false,
                                       calendarBusy: false, externalTrigger: "server-v2")
-        for (kind, event, title, followup): (QuestionKind, String, String?, Bool) in [
+        let cases: [(QuestionKind, String, String?, Bool)] = [
             (.currentState, "support_pre:bucket", "休憩前の状態", false),
             (.breakCheck, "support_discovery:pre", nil, true),
             (.supportOutcome, "support_outcome:break", nil, true),
             (.currentState, "support_post:break", "休憩後の状態", true),
             (.currentState, "routine_currentState", nil, false),
             (.supportOutcome, "outcome:legacy", nil, false)
-        ] {
+        ]
+        for (kind, event, title, followup) in cases {
             let q = PendingQuestion(participantID: "p001", kind: kind, prompt: "test",
                                     options: [], allowFreeText: false, eventType: event,
                                     detectedAt: now, context: context)
